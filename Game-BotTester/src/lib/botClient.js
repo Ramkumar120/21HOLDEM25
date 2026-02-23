@@ -33,6 +33,12 @@ class BotClient extends EventEmitter {
     this.socketBot = null;
 
     this.metrics = { ownTurns: 0, actionsSent: 0 };
+    this.state = {
+      nTableChips: 0,
+      nMinBet: 0,
+      myChips: null,
+      lastEventName: null,
+    };
   }
 
   async login() {
@@ -79,13 +85,31 @@ class BotClient extends EventEmitter {
     await this.socketBot.connect();
     const boardState = await this.socketBot.joinBoard();
     this.boardState = boardState;
+    this.updateStateFromBoardState(boardState);
     this.emit('ready', { boardId: this.boardId, boardState });
     return boardState;
+  }
+
+  updateStateFromBoardState(boardState) {
+    if (!boardState || typeof boardState !== 'object') return;
+    if (Number.isFinite(Number(boardState.nTableChips))) this.state.nTableChips = Number(boardState.nTableChips);
+    if (Number.isFinite(Number(boardState.nMinBet))) this.state.nMinBet = Number(boardState.nMinBet);
+
+    if (this.userId && Array.isArray(boardState.aParticipant)) {
+      const me = boardState.aParticipant.find(p => `${p?.iUserId}` === `${this.userId}`);
+      if (me && Number.isFinite(Number(me.nChips))) this.state.myChips = Number(me.nChips);
+    }
   }
 
   onBoardEvent(packet) {
     if (!packet || typeof packet !== 'object') return;
     const { sEventName, oData } = packet;
+    this.state.lastEventName = sEventName;
+    if (oData && Number.isFinite(Number(oData.nTableChips))) this.state.nTableChips = Number(oData.nTableChips);
+    if (oData && Number.isFinite(Number(oData.nMinBet))) this.state.nMinBet = Number(oData.nMinBet);
+    if (oData && this.userId && `${oData.iUserId}` === `${this.userId}` && Number.isFinite(Number(oData.nChips))) {
+      this.state.myChips = Number(oData.nChips);
+    }
 
     if (sEventName === 'resPlayerTurn' && oData?.iUserId && this.userId && `${oData.iUserId}` === this.userId) {
       this.metrics.ownTurns += 1;
@@ -105,7 +129,7 @@ class BotClient extends EventEmitter {
     return Array.isArray(turn?.aUserAction) ? turn.aUserAction.map(String) : [];
   }
 
-  async performAction(action, turn = {}) {
+  async performAction(action, turn = {}, options = {}) {
     if (!this.socketBot) throw new Error('Socket not connected');
     if (!action) throw new Error('Action is required');
 
@@ -117,28 +141,43 @@ class BotClient extends EventEmitter {
 
     if (this.actionDelayMs > 0) await sleep(this.actionDelayMs);
 
+    const ackMode = options.ackMode || 'none'; // 'none' | 'probe'
+    const ackTimeoutMs = Number.isFinite(Number(options.ackTimeoutMs)) ? Number(options.ackTimeoutMs) : 1200;
+
+    const sendWithMode = async (eventName, payload) => {
+      if (ackMode === 'probe') {
+        try {
+          return await this.socketBot.sendBoardAction(eventName, payload, ackTimeoutMs);
+        } catch (error) {
+          if (error?.message?.startsWith('Ack timeout for ')) return { noAck: true, sent: true };
+          throw error;
+        }
+      }
+      return this.socketBot.sendBoardActionNoAck(eventName, payload);
+    };
+
     let ack;
     switch (normalized.type) {
       case 'check':
-        ack = this.socketBot.sendBoardActionNoAck('reqCheck', {});
+        ack = await sendWithMode('reqCheck', {});
         break;
       case 'call':
-        ack = this.socketBot.sendBoardActionNoAck('reqCall', {});
+        ack = await sendWithMode('reqCall', {});
         break;
       case 'fold':
-        ack = this.socketBot.sendBoardActionNoAck('reqFold', {});
+        ack = await sendWithMode('reqFold', {});
         break;
       case 'stand':
-        ack = this.socketBot.sendBoardActionNoAck('reqStand', {});
+        ack = await sendWithMode('reqStand', {});
         break;
       case 'doubleDown':
-        ack = this.socketBot.sendBoardActionNoAck('reqDoubleDown', {});
+        ack = await sendWithMode('reqDoubleDown', {});
         break;
       case 'raise':
-        ack = this.socketBot.sendBoardActionNoAck('reqRaise', { nRaiseAmount: normalized.amount });
+        ack = await sendWithMode('reqRaise', { nRaiseAmount: normalized.amount });
         break;
       case 'raiseStand':
-        ack = this.socketBot.sendBoardActionNoAck('reqRaise', { nRaiseAmount: normalized.amount, bTakeCard: false });
+        ack = await sendWithMode('reqRaise', { nRaiseAmount: normalized.amount, bTakeCard: false });
         break;
       default:
         throw new Error(`Unknown normalized action: ${normalized.type}`);

@@ -75,6 +75,7 @@ function getConfig() {
     protoIndex: parseNumber(args['proto-index'] ?? process.env.POKER_PROTO_INDEX, 0),
     task: args.task || process.env.TASK || 'auto-check-call-fold',
     roundsTarget: parseNumber(args.rounds ?? process.env.ROUNDS_TARGET, null),
+    seed: parseNumber(args.seed ?? process.env.SEED, null),
     durationMs: parseNumber(args['duration-ms'] ?? process.env.RUN_DURATION_MS, 120000),
     staggerMs: parseNumber(args['stagger-ms'] ?? process.env.STAGGER_MS, 350),
     actionDelayMs: parseNumber(args['action-delay-ms'] ?? process.env.ACTION_DELAY_MS, 250),

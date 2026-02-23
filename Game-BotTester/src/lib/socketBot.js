@@ -82,9 +82,9 @@ class SocketBot extends EventEmitter {
     return res?.oData || res;
   }
 
-  async sendBoardAction(sEventName, oData = {}) {
+  async sendBoardAction(sEventName, oData = {}, timeoutMs = 10000) {
     const payload = { sEventName, oData };
-    const res = await this.emitWithAck(this.boardId, payload, 10000);
+    const res = await this.emitWithAck(this.boardId, payload, timeoutMs);
     return res;
   }
 

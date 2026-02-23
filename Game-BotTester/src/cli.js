@@ -12,8 +12,9 @@ Usage:
 Options:
   --users test1,test2,test3
   --password Test1234!
-  --task observe|auto-check-call-fold|fold-first-opportunity|scripted-actions
+  --task observe|auto-check-call-fold|fold-first-opportunity|spider-random|scripted-actions
   --rounds 6                   (task-specific; e.g. fold-first-opportunity per-hand target)
+  --seed 12345                 (optional; for spider-random reproducibility)
   --proto-id <mongo-id>
   --min-bet <number>
   --proto-index <number>    (default 0)
@@ -27,6 +28,7 @@ Options:
 Examples:
   node src/cli.js run --users test1,test2,test3 --password Test1234! --task observe --min-bet 5
   node src/cli.js run --users test1,test2,test3 --password Test1234! --task fold-first-opportunity --rounds 6 --min-bet 5
+  node src/cli.js run --users test1,test2,test3 --password Test1234! --task spider-random --rounds 20 --seed 12345 --min-bet 5
   node src/cli.js run --users test1,test2,test3 --password Test1234! --task scripted-actions --script ./tasks/example-script.json --min-bet 5
 `);
 }

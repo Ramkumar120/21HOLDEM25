@@ -1,12 +1,14 @@
 const observe = require('./observe');
 const autoCheckCallFold = require('./autoCheckCallFold');
 const foldFirstOpportunity = require('./foldFirstOpportunity');
+const spiderRandom = require('./spiderRandom');
 const scriptedActions = require('./scriptedActions');
 
 const TASKS = {
   observe,
   'auto-check-call-fold': autoCheckCallFold,
   'fold-first-opportunity': foldFirstOpportunity,
+  'spider-random': spiderRandom,
   'scripted-actions': scriptedActions,
 };
 

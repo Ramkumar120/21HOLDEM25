@@ -55,6 +55,16 @@ class BackendApi {
     return reply.data;
   }
 
+  async leaveBoard({ authorization }) {
+    const res = await requestJson(this.buildUrl('/poker/board/leave'), {
+      method: 'GET',
+      headers: { Authorization: authorization },
+      timeoutMs: 20000,
+    });
+    const reply = unwrapReply(res, 'leaveBoard');
+    return reply.data;
+  }
+
   selectPrototype(boardList, criteria = {}) {
     if (!Array.isArray(boardList) || !boardList.length) throw new Error('No board prototypes returned from backend');
 
