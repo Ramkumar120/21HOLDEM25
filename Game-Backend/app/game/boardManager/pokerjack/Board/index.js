@@ -97,8 +97,6 @@ class Board extends Service {
 
       await this.saveLogs([{ sAction: 'dealCommunityCard', eLogType: 'game', aCommunityCard: this.aCommunityCard }]);
 
-      const aWinner = [];
-
       for (const participant of this.aParticipant) {
         if (participant.eState !== 'playing') continue;
 
@@ -133,8 +131,6 @@ class Board extends Service {
             await participant.foldPlayer({ sReason: 'player is bust due to score above 21', eBehaviour: 'bust' });
           }
         }
-        if (participant.nCardScore === 21) aWinner.push(participant);
-
         // Calculate the score of the participant "Hand" Score
         // if (participant.nCardScore > 21) {
         //   const oAceCardHand = participant.aCardHand.find(card => card.nValue === 11);
@@ -160,7 +156,6 @@ class Board extends Service {
         }
       }
       if (allParticipantsAreBust) return await this.declareResult([], 'dealCommunityCard: allParticipantsAreBust');
-      if (aWinner.length) return await this.declareResult(aWinner, 'dealCommunityCard: aWinner');
 
       if (this.nTableRound == 3) {
         let maxScore = 0;
@@ -183,7 +178,10 @@ class Board extends Service {
       this.nTableRound++;
       await this.update({ nTableRound: this.nTableRound });
 
-      let userTurn = this.getParticipant(this.iUserTurn);
+      // Round opener stays fixed within a hand: player to the left of the BB.
+      const bigBlind = this.getParticipant(this.iBigBlindId);
+      let userTurn = bigBlind ? this.getNextParticipant(bigBlind.nSeat) : null;
+      if (!userTurn) userTurn = this.getParticipant(this.iUserTurn);
       if (!userTurn) {
         const aPlayingParticipants = this.aParticipant.filter(p => p.eState === 'playing');
         userTurn = aPlayingParticipants[0];

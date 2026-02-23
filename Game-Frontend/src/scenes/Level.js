@@ -91,6 +91,43 @@ disableContainerButtons(container) {
     });
 }
 
+layoutButtonIconText(btn) {
+    if (!btn?.btn_text || !btn?.btn_image) return;
+    const icon = btn.list?.find(child => child !== btn.btn_image && child !== btn.btn_text);
+    btn.btn_text.setScale(1);
+
+    const gap = icon ? 10 : 0;
+    const iconWidth = icon ? icon.displayWidth : 0;
+    let textWidth = btn.btn_text.displayWidth;
+    const maxContentWidth = Math.max(40, btn.btn_image.displayWidth - 24);
+
+    const rawContentWidth = iconWidth + gap + textWidth;
+    if (rawContentWidth > maxContentWidth && textWidth > 0) {
+        const maxTextWidth = Math.max(20, maxContentWidth - iconWidth - gap);
+        const scale = Phaser.Math.Clamp(maxTextWidth / textWidth, 0.62, 1);
+        btn.btn_text.setScale(scale);
+        textWidth = btn.btn_text.displayWidth;
+    }
+
+    const totalWidth = iconWidth + gap + textWidth;
+    const left = -totalWidth / 2;
+
+    if (icon) {
+        icon.setX(left + iconWidth / 2);
+        btn.btn_text.setX(icon.x + iconWidth / 2 + gap + textWidth / 2);
+    } else {
+        btn.btn_text.setX(0);
+    }
+}
+
+setStandButtonLabel(label = 'Stand') {
+    const btn = this.oButtons?.btn_stand;
+    if (!btn?.btn_text) return;
+    btn.btn_text.setFontSize('62px');
+    btn.btn_text.setText(label);
+    this.layoutButtonIconText(btn);
+}
+
     // ==============================================================
     // HEADER (top bar) — ping display + settings/exit buttons
     // ==============================================================
@@ -267,8 +304,13 @@ setButtons() {
         texture: assets.btn_pink, scaleX: 0.8, scaleY: 0.8, iconTexture: assets.stand_icon, 
         text: 'Stand', fontSize: '62px' 
     }, () => {
-        this.oSocketManager.emit(emitter.reqStand);
+        if (this.oButtons?.btn_stand?.bCallStandMode) {
+            this.oSocketManager.emit(emitter.reqCall, { bTakeCard: false });
+        } else {
+            this.oSocketManager.emit(emitter.reqStand);
+        }
     }).setVisible(false);
+    btn_stand.bCallStandMode = false;
     this.container_buttons.add(btn_stand);
 
     // FIXED: MIN button
@@ -727,8 +769,13 @@ setButtons() {
             const lastRaiseLog = logs.find(log =>
                 log.sAction === 'raise+stand' && log.iUserId === oData.iUserId
             );
+            const lastCallStandLog = logs.find(log =>
+                log.sAction === 'call+stand' && log.iUserId === oData.iUserId
+            );
             if (lastRaiseLog) {
                 player?.playerProfile?.setBettingLabel('Raise+Stand');
+            } else if (lastCallStandLog) {
+                player?.playerProfile?.setBettingLabel('Call+Stand');
             } else {
                 player?.playerProfile?.setBettingLabel('Stand');
             }
@@ -966,6 +1013,8 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
                 break;
             case 's':
                 this.oButtons.btn_stand.setVisible(true);
+                this.oButtons.btn_stand.bCallStandMode = actions.includes('c') && callAmount > 0;
+                this.setStandButtonLabel(this.oButtons.btn_stand.bCallStandMode ? 'Call/Stand' : 'Stand');
                 break;
             case 'a':
                 this.oButtons.btn_allInCommon.setVisible(true);
@@ -992,6 +1041,8 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
     this.oButtons.btn_doubleDown.setVisible(false);
     this.oButtons.btn_allInCommon.setVisible(false);
     this.oButtons.btn_stand.setVisible(false);
+    this.oButtons.btn_stand.bCallStandMode = false;
+    this.setStandButtonLabel('Stand');
     this.oButtons.btn_check.setVisible(false);
     this.oFooter.footer.setVisible(false);
 }

@@ -6,6 +6,7 @@ const Service = require('./lib/Service');
 class Participant extends Service {
   async call(oData, callback) {
     try {
+      const bCallStand = oData?.bTakeCard === false;
       const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
       const nCallAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
 
@@ -41,15 +42,33 @@ class Participant extends Service {
         await this.oBoard.update({ aParticipant: this.oBoard.aParticipant.map(p => p.toJSON()) });
       }
 
+      if (bCallStand) {
+        this.isDoubleDownLock = true;
+        this.nStandAtRound = this.oBoard.nTableRound;
+        this.aUserAction = ['c', 'f'];
+      }
+
       await this.oBoard.update({ nTableChips: this.oBoard.nTableChips, nMaxBet: this.oBoard.nMaxBet, aParticipant: [this.toJSON()] });
-      await this.oBoard.emit('resCall', {
-        iUserId: this.iUserId,
-        nTableChips: this.oBoard.nTableChips,
-        nLastBidChips: nCallAmount,
-        nChips: this.nChips,
-        nMinBet: this.oBoard.nMinBet,
-      });
-      await this.oBoard.saveLogs([{ sAction: 'call', eLogType: 'game', iUserId: this.iUserId, nCallAmount }]);
+      if (bCallStand) {
+        await this.oBoard.emit('resStand', {
+          iUserId: this.iUserId,
+          nStandAtRound: this.nStandAtRound,
+          nTableChips: this.oBoard.nTableChips,
+          nLastBidChips: nCallAmount,
+          nChips: this.nChips,
+          nMinBet: this.oBoard.nMinBet,
+        });
+        await this.oBoard.saveLogs([{ sAction: 'call+stand', eLogType: 'game', iUserId: this.iUserId, nCallAmount }]);
+      } else {
+        await this.oBoard.emit('resCall', {
+          iUserId: this.iUserId,
+          nTableChips: this.oBoard.nTableChips,
+          nLastBidChips: nCallAmount,
+          nChips: this.nChips,
+          nMinBet: this.oBoard.nMinBet,
+        });
+        await this.oBoard.saveLogs([{ sAction: 'call', eLogType: 'game', iUserId: this.iUserId, nCallAmount }]);
+      }
 
       // if (this.oBoard.nTableChips >= this.oBoard.nMaxTableAmount) return this.reachMaxTableAmount();
 
@@ -61,6 +80,7 @@ class Participant extends Service {
 
   async raise(oData, callback) {
     try {
+      const bRaiseStand = oData?.bTakeCard === false;
       const nRaiseAmount = Number(oData.nRaiseAmount);
       if (!Number.isFinite(nRaiseAmount) || nRaiseAmount <= 0) return callback({ error: 'Raise amount is invalid' });
       if (nRaiseAmount < this.oBoard.nMinBet) return callback({ error: 'Raise amount is should not be less than min bet' });
@@ -97,20 +117,38 @@ class Participant extends Service {
         if (p.iUserId !== this.iUserId) p.nPlayerTurnCount = 0;
       });
 
+      if (bRaiseStand) {
+        this.isDoubleDownLock = true;
+        this.nStandAtRound = this.oBoard.nTableRound;
+        this.aUserAction = ['c', 'f'];
+      }
+
       await this.oBoard.update({
         nMinBet: this.oBoard.nMinBet,
         nTableChips: this.oBoard.nTableChips,
         nMaxBet: this.oBoard.nMaxBet,
         aParticipant: this.oBoard.aParticipant.map(p => p.toJSON()),
       });
-      await this.oBoard.emit('resRaise', {
-        iUserId: this.iUserId,
-        nTableChips: this.oBoard.nTableChips,
-        nLastBidChips: nTotalDebit,
-        nChips: this.nChips,
-        nMinBet: this.oBoard.nMinBet,
-      });
-      await this.oBoard.saveLogs([{ sAction: 'raise', eLogType: 'game', iUserId: this.iUserId, nRaiseAmount, nToCallAmount, nTotalDebit }]);
+      if (bRaiseStand) {
+        await this.oBoard.emit('resStand', {
+          iUserId: this.iUserId,
+          nStandAtRound: this.nStandAtRound,
+          nTableChips: this.oBoard.nTableChips,
+          nLastBidChips: nTotalDebit,
+          nChips: this.nChips,
+          nMinBet: this.oBoard.nMinBet,
+        });
+        await this.oBoard.saveLogs([{ sAction: 'raise+stand', eLogType: 'game', iUserId: this.iUserId, nRaiseAmount, nToCallAmount, nTotalDebit }]);
+      } else {
+        await this.oBoard.emit('resRaise', {
+          iUserId: this.iUserId,
+          nTableChips: this.oBoard.nTableChips,
+          nLastBidChips: nTotalDebit,
+          nChips: this.nChips,
+          nMinBet: this.oBoard.nMinBet,
+        });
+        await this.oBoard.saveLogs([{ sAction: 'raise', eLogType: 'game', iUserId: this.iUserId, nRaiseAmount, nToCallAmount, nTotalDebit }]);
+      }
 
       // if (this.oBoard.nTableChips >= this.oBoard.nMaxTableAmount) return this.reachMaxTableAmount();
 
@@ -196,34 +234,41 @@ class Participant extends Service {
 
   async stand(oData, callback) {
     try {
-      const nStandAmount = this.oBoard.nMinBet;
+      const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
+      const nStandAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
+      const bIsDefendingRaise = nStandAmount > 0;
       if (this.nChips < nStandAmount) {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
       }
 
       this.isDoubleDownLock = true; // lock double down because player is stand & its same functionality
       this.nStandAtRound = this.oBoard.nTableRound;
-      this.aUserAction = ['c', 'f'];
+      this.aUserAction = bCheckOpenState ? ['ck', 'f'] : ['c', 'f'];
 
-      await this.updateUser({ $inc: { nChips: -nStandAmount } });
-      this.nChips -= nStandAmount;
-      this.oBoard.nTableChips += nStandAmount;
-      this.oBoard.nMaxBet = this.oBoard.nTableChips;
-      this.nLastBidChips = nStandAmount;
+      if (nStandAmount > 0) {
+        await this.updateUser({ $inc: { nChips: -nStandAmount } });
+        this.nChips -= nStandAmount;
+        this.oBoard.nTableChips += nStandAmount;
+        this.oBoard.nMaxBet = this.oBoard.nTableChips;
+        this.nLastBidChips += nStandAmount;
 
-      await this.oBoard.update({ aParticipant: [this.toJSON()] });
+        await Transaction.create({
+          iUserId: this.iUserId,
+          iBoardId: this.oBoard._id,
+          nAmount: nStandAmount,
+          eType: 'debit',
+          eMode: 'game',
+          eStatus: 'Success',
+          nGameRound: this.oBoard.nGameRound,
+        });
+      }
 
-      await Transaction.create({
-        iUserId: this.iUserId,
-        iBoardId: this.oBoard._id,
-        nAmount: nStandAmount,
-        eType: 'debit',
-        eMode: 'game',
-        eStatus: 'Success',
-        nGameRound: this.oBoard.nGameRound,
+      await this.oBoard.update({
+        ...(nStandAmount > 0 && { nTableChips: this.oBoard.nTableChips, nMaxBet: this.oBoard.nMaxBet }),
+        aParticipant: [this.toJSON()],
       });
 
-      if (this.oBoard.nTableRound > 1) {
+      if (this.oBoard.nTableRound > 1 && bIsDefendingRaise) {
         this.oBoard.aParticipant.forEach(p => {
           if (p.eState !== 'playing') return;
           p.aUserAction = p.aUserAction.map(action => (action === 'ck' ? 'c' : action));
@@ -235,11 +280,11 @@ class Participant extends Service {
         iUserId: this.iUserId,
         nStandAtRound: this.nStandAtRound,
         nTableChips: this.oBoard.nTableChips,
-        nLastBidChips: this.nLastBidChips,
+        nLastBidChips: nStandAmount,
         nChips: this.nChips,
         nMinBet: this.oBoard.nMinBet,
       });
-      await this.oBoard.saveLogs([{ sAction: 'stand', eLogType: 'game', iUserId: this.iUserId, nStandAmount }]);
+      await this.oBoard.saveLogs([{ sAction: 'stand', eLogType: 'game', iUserId: this.iUserId, nStandAmount, bIsDefendingRaise }]);
 
       // if (this.oBoard.nTableChips >= this.oBoard.nMaxTableAmount) return this.reachMaxTableAmount();
 
