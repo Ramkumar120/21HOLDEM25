@@ -1,0 +1,22 @@
+body {
+    // background-color: #343639;
+    // margin: 0;
+    // padding: 0;
+    // overflow: hidden;
+}
+
+#main-layout canvas {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0 !important;
+}
+
+#main-layout {
+    max-height: calc(var(--vh, 1vh) * 100);
+}
+
+:root {
+    --vh: 1vh;
+}

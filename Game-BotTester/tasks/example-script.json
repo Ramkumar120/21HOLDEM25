@@ -1,0 +1,9 @@
+{
+  "description": "Simple scripted sequence per user. One item is consumed per own turn; fallback applies after script is exhausted.",
+  "fallback": "auto",
+  "perUser": {
+    "test1": ["ck", "r:200", "c", "f"],
+    "test2": ["ck", "c", "r:200", "c"],
+    "test3": ["ck", "c", "c", "f"]
+  }
+}

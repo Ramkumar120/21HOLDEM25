@@ -1,0 +1,481 @@
+const Service = require('./lib/Service');
+const { redis, deck, mongodb } = require('../../../../utils');
+const { PokerFinishGame, PokerBoard, BoardProtoType, Transaction, User, Setting, Analytics } = require('../../../../models');
+
+class Board extends Service {
+  async collectBootAmount() {
+    try {
+      const blindMultipliers = { [this.iSmallBlindId]: 1, [this.iBigBlindId]: 2 };
+
+      // collect nMinBet from all players
+      // for (const participant of this.aParticipant) {
+      //   if (participant.eState !== 'playing') continue;
+
+      //   await participant.updateUser({ $inc: { nChips: -this.nMinBet } });
+      //   this.nTableChips += this.nMinBet;
+      //   participant.nChips -= this.nMinBet;
+      //   participant.nLastBidChips = this.nMinBet;
+
+      //   await Transaction.create({
+      //     iUserId: participant.iUserId,
+      //     iBoardId: this._id,
+      //     nAmount: this.nMinBet,
+      //     eType: 'debit',
+      //     eMode: 'game',
+      //     eStatus: 'Success',
+      //     nGameRound: this.nGameRound,
+      //   });
+      // }
+
+      for (const participant of this.aParticipant) {
+        if (participant.eState !== 'playing') continue;
+
+        const multiplier = blindMultipliers[participant.iUserId];
+        if (multiplier) {
+          const betAmount = this.nMinBet * multiplier;
+
+          await participant.updateUser({ $inc: { nChips: -betAmount } });
+          this.nTableChips += betAmount;
+          participant.nChips -= betAmount;
+          participant.nLastBidChips = betAmount;
+
+          await Transaction.create({
+            iUserId: participant.iUserId,
+            iBoardId: this._id,
+            nAmount: betAmount,
+            eType: 'debit',
+            eMode: 'game',
+            eStatus: 'Success',
+            nGameRound: this.nGameRound,
+          });
+        }
+      }
+      this.nMinBet = this.nMinBet * 2;
+      this.nMaxBet = this.nTableChips;
+      await this.update({ nMinBet: this.nMinBet, nMaxBet: this.nMaxBet, nTableChips: this.nTableChips, aParticipant: this.aParticipant.map(p => p.toJSON()) });
+
+      await this.emit('resCollectBootAmount', {
+        nTableChips: this.nTableChips,
+        aParticipant: this.aParticipant.map(p => ({ iUserId: p.iUserId, nLastBidChips: p.nLastBidChips, nChips: p.nChips })),
+      });
+
+      await this.saveLogs([{ sAction: 'collectBootAmount', eLogType: 'game', aParticipant: this.aParticipant.map(p => ({ iUserId: p.iUserId, nLastBidChips: p.nLastBidChips })) }]);
+
+      await this.distributeCard();
+    } catch (error) {
+      console.log('collectBootAmount', error);
+    }
+  }
+
+  async distributeCard() {
+    try {
+      for (const participant of this.aParticipant) {
+        if (participant.eState !== 'playing') continue;
+
+        const oCard = this.aDeck.pop();
+        participant.aCardHand.push(oCard);
+        participant.nCardScore += oCard.nValue;
+        participant.emit('resCardHand', { aCardHand: participant.aCardHand, nCardScore: participant.nCardScore });
+
+        participant.updateUser({ $inc: { nGamePlayed: 1 } });
+      }
+      await this.update({ aDeck: this.aDeck, aParticipant: this.aParticipant.map(p => p.toJSON()) });
+
+      const userTurn = this.getParticipant(this.iUserTurn);
+      if (!userTurn) return log.red('userTurn not found in distributeCard');
+      await _.delay(1200);
+      userTurn.takeTurn();
+    } catch (error) {
+      console.log('cardDistribution', error);
+    }
+  }
+
+  async dealCommunityCard() {
+    try {
+      const oCard = this.aDeck.pop();
+      this.aCommunityCard.push(oCard);
+
+      await this.saveLogs([{ sAction: 'dealCommunityCard', eLogType: 'game', aCommunityCard: this.aCommunityCard }]);
+
+      const aWinner = [];
+
+      for (const participant of this.aParticipant) {
+        if (participant.eState !== 'playing') continue;
+
+        if (this.nTableRound < 3) {
+          participant.nLastBidChips = 0;
+          participant.nPlayerTurnCount = 0;
+          participant.aUserAction = participant.aUserAction.map(action => (action === 'c' ? 'ck' : action === 'd' ? 's' : action));
+        }
+        if (participant.isDoubleDownLock) continue;
+        participant.nCardScore += oCard.nValue;
+
+        if (participant.nCardScore > 21) {
+          for (const card of this.aCommunityCard) {
+            if (!card.aAceConvertedToOne) card.aAceConvertedToOne = [];
+
+            if (participant.nCardScore > 21 && card.nValue === 11 && !card.aAceConvertedToOne.includes(participant.iUserId)) {
+              card.aAceConvertedToOne.push(participant.iUserId);
+              participant.bHasAceAndBust = true;
+              participant.nCardScore -= 10;
+            }
+          }
+
+          const oAceCardHand = participant.aCardHand.find(card => card.nValue === 11);
+          if (participant.nCardScore > 21 && oAceCardHand) {
+            oAceCardHand.nValue = 1;
+            participant.bHasAceAndBust = true;
+            participant.nCardScore -= 10;
+          }
+
+          if (participant.nCardScore > 21) {
+            participant.eState = 'bust';
+            await participant.foldPlayer({ sReason: 'player is bust due to score above 21', eBehaviour: 'bust' });
+          }
+        }
+        if (participant.nCardScore === 21) aWinner.push(participant);
+
+        // Calculate the score of the participant "Hand" Score
+        // if (participant.nCardScore > 21) {
+        //   const oAceCardHand = participant.aCardHand.find(card => card.nValue === 11);
+        //   if (oAceCardHand) {
+        //     oAceCardHand.nValue = 1;
+        //     participant.bHasAceAndBust = true;
+        //     participant.nCardScore -= 10;
+        //   } else {
+        //     participant.eState = 'bust';
+        //     await participant.foldPlayer({ sReason: 'player is bust due to score above 21', eBehaviour: 'bust' });
+        //   }
+        // } else if (participant.nCardScore === 21) aWinner.push(participant);
+      }
+
+      await this.update({ aCommunityCard: this.aCommunityCard, aParticipant: this.aParticipant.map(p => p.toJSON()) });
+      await this.emit('resCommunityCard', { aCommunityCard: this.aCommunityCard, aParticipant: this.aParticipant });
+
+      let allParticipantsAreBust = true;
+      for (const participant of this.aParticipant) {
+        if (participant.eState === 'playing') {
+          allParticipantsAreBust = false;
+          break;
+        }
+      }
+      if (allParticipantsAreBust) return await this.declareResult([], 'dealCommunityCard: allParticipantsAreBust');
+      if (aWinner.length) return await this.declareResult(aWinner, 'dealCommunityCard: aWinner');
+
+      if (this.nTableRound == 3) {
+        let maxScore = 0;
+        let aWinner = [];
+
+        for (const participant of this.aParticipant) {
+          if (participant.eState == 'playing' && participant.nCardScore <= 21) {
+            if (participant.nCardScore > maxScore) {
+              maxScore = participant.nCardScore;
+              aWinner = [participant];
+            } else if (participant.nCardScore === maxScore) {
+              aWinner.push(participant);
+            }
+          }
+        }
+
+        return await this.declareResult(aWinner, 'dealCommunityCard: aWinner in 3rd round');
+      }
+
+      this.nTableRound++;
+      await this.update({ nTableRound: this.nTableRound });
+
+      const userTurn = this.getParticipant(this.iUserTurn);
+      if (!userTurn) return log.red('userTurn not found in dealCommunityCard');
+      if (userTurn.eState === 'bust') this.getNextParticipant(userTurn.nSeat).takeTurn();
+      else userTurn.takeTurn();
+    } catch (error) {
+      console.log('dealCommunityCard', error);
+    }
+  }
+
+  async declareResult(aWinner, functionCalledFrom) {
+    try {
+      const turnScheduler = await this.getScheduler('assignTurnTimeout');
+      if (turnScheduler) await this.deleteScheduler('assignTurnTimeout');
+
+      this.eState = 'finished';
+
+      // ------------------------------ Pot Distribution ------------------------------
+      if (aWinner.length) {
+        const aTransactionData = [];
+        const setting = await Setting.findOne({}, { _id: 0, nRakeAmount: 1 }).lean();
+        const adminRakeAmount = (this.nTableChips * setting.nRakeAmount) / 100;
+        aTransactionData.push({
+          iUserId: mongodb.mongify('5d3586d3e3cdfd095f9af778'),
+          iBoardId: this._id,
+          nAmount: adminRakeAmount,
+          eType: 'credit',
+          eMode: 'game',
+          eStatus: 'Success',
+          sDescription: 'adminRakeAmountCredit',
+          nGameRound: this.nGameRound,
+        });
+
+        let chipsPerWinner = (this.nTableChips - adminRakeAmount) / aWinner.length;
+        // if (chipsPerWinner % 1 !== 0) {
+        //   const flooredChips = Math.floor(chipsPerWinner);
+        //   const remainingDecimalChips = chipsPerWinner - flooredChips;
+        //   chipsPerWinner = flooredChips;
+
+        //   const previousParticipant = this.getPreviousParticipant(this.getParticipant(this.iUserTurn)?.nSeat);
+        //   if (!previousParticipant) log.red('previousParticipant not found in declareResult');
+        //   previousParticipant.nChips += remainingDecimalChips;
+        //   previousParticipant.nWinningAmount += remainingDecimalChips;
+        //   await previousParticipant.updateUser({ $inc: { nChips: remainingDecimalChips } });
+        // aTransactionData.push({
+        //   iUserId: previousParticipant.iUserId,
+        //   iBoardId: this._id,
+        //   nAmount: remainingDecimalChips,
+        //   eType: 'credit',
+        //   eMode: 'game',
+        //   eStatus: 'Success',
+        //   nGameRound: this.nGameRound,
+        // });
+        // }
+
+        for (const winner of aWinner) {
+          winner.eState = 'winner';
+          winner.nChips += chipsPerWinner;
+          winner.nWinningAmount += chipsPerWinner;
+
+          await winner.updateUser({ $inc: { nChips: chipsPerWinner, nGameWon: 1 } });
+          aTransactionData.push({
+            iUserId: winner.iUserId,
+            iBoardId: this._id,
+            nAmount: chipsPerWinner,
+            eType: 'credit',
+            eMode: 'game',
+            eStatus: 'Success',
+            nGameRound: this.nGameRound,
+          });
+        }
+
+        if (aTransactionData.length) await Transaction.insertMany(aTransactionData);
+      }
+      // ------------------------------ End of Pot Distribution ------------------------------
+
+      await this.update({ aParticipant: this.aParticipant.map(p => p.toJSON()), eState: this.eState });
+
+      const resultData = {
+        nRoundStartsIn: this.oSetting.nRoundStartsIn + 4000,
+        aParticipant: this.aParticipant.map(p => ({
+          iUserId: p.iUserId,
+          eState: p.eState,
+          nWinningAmount: p.nWinningAmount,
+          nChips: p.nChips,
+          aCardHand: p.aCardHand,
+          nCardScore: p.nCardScore,
+        })),
+        nTableChips: 0,
+      };
+
+      if (!aWinner.length) {
+        resultData.sReason = 'All players are bust';
+        resultData.bAllPlayersBust = true;
+        resultData.bAllPlayerBust = true;
+      }
+
+      const aPlayingPlayers = this.aParticipant.filter(p => !p.bNextTurnLeave);
+      if (aPlayingPlayers.length < 3) resultData.nRoundStartsIn = 4000;
+
+      this.setSchedular('resetTable', null, resultData.nRoundStartsIn);
+      await this.emit('resDeclareResult', resultData);
+
+      await this.saveLogs([{ sAction: 'declareResult', eLogType: 'game', ...(!aWinner.length && { sReason: 'All players are bust' }), functionCalledFrom }]);
+      emitter.emit('saveBoardHistory', this._id);
+    } catch (error) {
+      console.log('declareResult', error);
+    }
+  }
+
+  async resetTable() {
+    try {
+      const proto = await BoardProtoType.findOne({ _id: this.iProtoId }, { _id: 0, nMinBet: 1, nMinBuyIn: 1 }).lean();
+
+      for (const participant of this.aParticipant) {
+        participant.aCardHand = [];
+        participant.aUserAction = ['c', 'r', 'f', 'd'];
+        participant.nCardScore = 0;
+        participant.isDoubleDownLock = false;
+        participant.bHasAceAndBust = false;
+        participant.nStandAtRound = 0;
+        participant.nLastBidChips = 0;
+        participant.nWinningAmount = 0;
+        participant.nPlayerTurnCount = 0;
+
+        if (participant.bNextTurnLeave || participant.nChips < proto.nMinBet * 2) participant.eState = 'leave';
+        else participant.eState = 'waiting';
+
+        await this.update({ aParticipant: [participant.toJSON()] });
+      }
+
+      const aLeftPlayers = this.aParticipant.filter(p => p.eState === 'leave');
+      if (aLeftPlayers.length) await this.handleLeftPlayers(aLeftPlayers);
+
+      this.aParticipant = this.aParticipant.filter(p => p.eState === 'waiting');
+      this.aCommunityCard = [];
+      this.aDeck = deck.getDeck(1);
+      this.nTableChips = 0;
+      this.eState = 'waiting';
+      this.nMinBet = proto.nMinBet;
+      this.nMaxBet = 0;
+      this.nTableRound = 1;
+      this.nGameRound = this.nGameRound + 1;
+
+      await this.update({
+        eState: this.eState,
+        aDeck: this.aDeck,
+        aCommunityCard: this.aCommunityCard,
+        nMinBet: proto.nMinBet,
+        nMaxBet: this.nMaxBet,
+        nTableRound: this.nTableRound,
+        nGameRound: this.nGameRound,
+        nTableChips: this.nTableChips,
+        aParticipant: this.aParticipant,
+      });
+
+      if (!this.aParticipant.length) {
+        return emitter.emit('flushBoard', { iBoardId: this._id, iProtoId: this.iProtoId }); // no player left in table. -> finish state
+      }
+
+      if (this.aParticipant.length < 3) {
+        this.emit('resRefundOnLongWait', { message: 'Please wait for other players to join', nMaxWaitingTime: this.oSetting.nMaxWaitingTime });
+        return this.setSchedular('refundOnLongWait', '', this.oSetting.nMaxWaitingTime);
+      }
+
+      await this.saveLogs([
+        { sAction: 'resetTable', eLogType: 'game', aParticipant: this.aParticipant.map(p => ({ iUserId: p.iUserId, sUserName: p.sUserName, eState: p.eState })) },
+      ]);
+
+      this.initializeGame();
+    } catch (error) {
+      console.log('resetTable', error);
+    }
+  }
+
+  async handleLeftPlayers(aLeftPlayers) {
+    try {
+      for (const participant of aLeftPlayers) {
+        const query = { iBoardId: this._id };
+        if (this.sPrivateCode) {
+          query.sPrivateCode = this.sPrivateCode;
+          await User.updateOne({ _id: participant.iUserId }, { $unset: { sPrivateCode: 1 } });
+        } else query.iProtoId = this.iProtoId;
+        const pokerBoard = await PokerBoard.findOneAndUpdate(query, { $pull: { aParticipants: participant.iUserId } }, { new: true }).lean();
+        if (!pokerBoard) log.red('handleLeftPlayers :: Board not found while leaving');
+
+        await redis.client.json.del(_.getBoardKey(this._id), `.aParticipant_${participant.iUserId}`);
+        await redis.client.json.del(_.getBoardKey(this._id), `.aParticipant-${participant.iUserId}`);
+
+        await User.updateOne({ _id: participant.iUserId }, { $pull: { aPokerBoard: this._id } });
+
+        await participant.emit('resFoldPlayer', {
+          iUserId: participant.iUserId,
+          oLeave: {
+            eBehaviour: 'leave',
+            sReason: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?",
+            bShowMessage: true,
+          },
+        });
+
+        delete this.oSocketId[participant.iUserId];
+        await this.update({ oSocketId: this.oSocketId });
+
+        if (pokerBoard && !pokerBoard.aParticipants.length) {
+          await PokerBoard.deleteOne(query);
+          const keys = await redis.client.keys(`${this._id}:*`);
+          if (keys.length) await redis.client.unlink(keys);
+          await this.deleteScheduler('refundOnLongWait', '');
+        }
+
+        if (participant.dGameStartedAt !== 0) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          await Analytics.findOneAndUpdate(
+            { iUserId: participant.iUserId, dCreatedDate: { $gte: today } },
+            { $inc: { nInGameTime: Math.floor((Date.now() - participant.dGameStartedAt) / 1000) } },
+            { upsert: true, setDefaultsOnInsert: true }
+          );
+        }
+      }
+    } catch (error) {
+      console.log('handleLeftPlayers', error);
+    }
+  }
+
+  async saveLogs(_aLog = []) {
+    try {
+      if (!_aLog.length) return false;
+
+      const aLog = [];
+      for (const oLog of _aLog) {
+        oLog.nTableRound = this.nTableRound;
+        aLog.push(oLog);
+      }
+      if (!aLog.length) return false;
+      const existingLogs = await redis.client.json.GET(_.getBoardLogsKey(this._id));
+      await redis.client.json.SET(_.getBoardLogsKey(this._id), '$', existingLogs ? [...existingLogs, ...aLog] : aLog);
+
+      const [game] = await PokerFinishGame.find({ iBoardId: this._id, nGameRound: this.nGameRound }).sort({ nGameRound: -1 }).limit(1);
+      if (!game) return false;
+      if (!game.aLog.length) game.aLog = [];
+      game.aLog.unshift(...aLog);
+      await game.save();
+    } catch (error) {
+      console.log('saveLogs', error);
+    }
+  }
+
+  async refundOnLongWait() {
+    try {
+      this.emit('resKickOut', { message: messages.custom.no_player_found });
+
+      const query = { iBoardId: this._id };
+      if (this.sPrivateCode) {
+        query.sPrivateCode = this.sPrivateCode;
+
+        const aParticipantUserIds = [];
+        for (const participant of this.aParticipant) aParticipantUserIds.push(participant.iUserId);
+        await User.updateMany({ _id: { $in: aParticipantUserIds } }, { $unset: { sPrivateCode: 1 } });
+      } else query.iProtoId = this.iProtoId;
+      await PokerBoard.deleteOne(query);
+      const keys = await redis.client.keys(`${this._id}:*`);
+      await redis.client.unlink(keys);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      for (const participant of this.aParticipant) {
+        await User.updateOne({ _id: participant.iUserId }, { $pull: { aPokerBoard: this._id } });
+        if (participant.dGameStartedAt !== 0) {
+          await Analytics.findOneAndUpdate(
+            { iUserId: participant.iUserId, dCreatedDate: { $gte: today } },
+            { $inc: { nInGameTime: Math.floor((Date.now() - participant.dGameStartedAt) / 1000) } },
+            { upsert: true, setDefaultsOnInsert: true }
+          );
+        }
+      }
+    } catch (error) {
+      console.log('refundOnLongWait', error);
+    }
+  }
+
+  async emit(sEventName, oData) {
+    try {
+      const board = await redis.client.json.GET(_.getBoardKey(this._id));
+      if (!board) return log.red(`emit :: Board not found :: ${this._id} :: sEventName :: ${sEventName}`);
+      Object.values(board?.oSocketId).forEach(sRootSocket => {
+        if (sRootSocket) global.io.to(sRootSocket).emit(this._id, { sEventName, oData });
+      });
+    } catch (error) {
+      console.log('emit', error);
+    }
+  }
+}
+
+module.exports = Board;

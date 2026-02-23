@@ -1,0 +1,19 @@
+# Monorepo local-only files
+MANUAL_BACKUPS/
+*.log
+*.out.log
+*.err.log
+
+# Dependencies / caches
+**/node_modules/
+**/.cache/
+
+# Local environment files
+**/.env
+
+# Preserve old nested repo metadata locally, but do not track it in the monorepo
+**/.git.nested-backup-*/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
