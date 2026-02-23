@@ -293,9 +293,16 @@ class Participant extends Service {
 
   async takeTurn() {
     try {
-      if (this.eState !== 'playing' || this.oBoard.eState !== 'playing') return false;
+      if (this.oBoard.eState !== 'playing') return false;
 
       const playingPlayers = this.oBoard.aParticipant.filter(e => e.eState === 'playing');
+      if (this.eState !== 'playing') {
+        if (playingPlayers.length === 1) return await this.oBoard.declareResult(playingPlayers, 'takeTurn: non-playing target with 1 player left');
+        const nextParticipant = this.oBoard.getNextParticipant(this.nSeat);
+        if (nextParticipant && nextParticipant.iUserId !== this.iUserId) return await nextParticipant.takeTurn();
+        return false;
+      }
+
       if (playingPlayers.length === 1) return await this.oBoard.declareResult(playingPlayers, 'takeTurn: 1 player left');
 
       if (this.isDoubleDownLock) {

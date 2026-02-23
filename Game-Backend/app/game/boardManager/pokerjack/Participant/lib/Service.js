@@ -171,10 +171,11 @@ class Service {
     try {
       log.yellow('🚀 :: Service :: foldPlayer :: foldPlayer:', oLeave.eBehaviour);
 
+      const bWasCurrentTurn = this.hasValidTurn();
       this.eState = oLeave.eBehaviour;
       this.bNextTurnLeave = oLeave.eBehaviour === 'leave';
 
-      if (this.hasValidTurn() && (this.eState === 'fold' || this.eState === 'leave')) this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
+      if (bWasCurrentTurn && (this.eState === 'fold' || this.eState === 'leave')) await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
       await this.oBoard.emit('resFoldPlayer', { iUserId: this.iUserId, oLeave });
 
       await this.oBoard.update({ aParticipant: [this.toJSON()] });
@@ -190,7 +191,7 @@ class Service {
         if (playingPlayers.length === 1) return await this.oBoard.declareResult(playingPlayers, 'FoldPlayer(leave): 1 player leave');
       }
 
-      if (this.hasValidTurn() && (this.eState === 'fold' || this.eState === 'leave')) return await this.passTurn();
+      if (bWasCurrentTurn && (this.eState === 'fold' || this.eState === 'leave')) return await this.passTurn();
     } catch (error) {
       console.log('error from foldPlayer :: ', error);
     }

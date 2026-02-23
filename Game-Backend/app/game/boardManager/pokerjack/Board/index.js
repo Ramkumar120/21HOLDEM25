@@ -183,10 +183,20 @@ class Board extends Service {
       this.nTableRound++;
       await this.update({ nTableRound: this.nTableRound });
 
-      const userTurn = this.getParticipant(this.iUserTurn);
-      if (!userTurn) return log.red('userTurn not found in dealCommunityCard');
-      if (userTurn.eState === 'bust') this.getNextParticipant(userTurn.nSeat).takeTurn();
-      else userTurn.takeTurn();
+      let userTurn = this.getParticipant(this.iUserTurn);
+      if (!userTurn) {
+        const aPlayingParticipants = this.aParticipant.filter(p => p.eState === 'playing');
+        userTurn = aPlayingParticipants[0];
+      } else if (userTurn.eState !== 'playing') {
+        userTurn = this.getNextParticipant(userTurn.nSeat);
+      }
+
+      if (!userTurn || userTurn.eState !== 'playing') {
+        const aPlayingParticipants = this.aParticipant.filter(p => p.eState === 'playing');
+        if (aPlayingParticipants.length <= 1) return await this.declareResult(aPlayingParticipants, 'dealCommunityCard: invalid userTurn fallback');
+        return log.red('userTurn not found in dealCommunityCard');
+      }
+      userTurn.takeTurn();
     } catch (error) {
       console.log('dealCommunityCard', error);
     }
