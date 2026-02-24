@@ -128,6 +128,27 @@ setStandButtonLabel(label = 'Stand') {
     this.layoutButtonIconText(btn);
 }
 
+setCallButtonLabel(label = 'Call') {
+    const btn = this.oButtons?.btn_call;
+    if (!btn?.btn_text) return;
+    btn.btn_text.setFontSize('62px');
+    btn.btn_text.setText(label);
+    this.layoutButtonIconText(btn);
+}
+
+refreshRaisePresetLabels() {
+    const btnFullPot = this.oButtons?.btn_fullPot;
+    if (!btnFullPot?.btn_text) return;
+
+    const potAmount = Number(this.oGameManager?.nPotAmount) || 0;
+    const myChips = Number(this.oGameManager?.nMyPlayerChips) || 0;
+    const bPotExceedsBankroll = potAmount > myChips && myChips > 0;
+
+    btnFullPot.bActsAsAllIn = bPotExceedsBankroll;
+    btnFullPot.btn_text.setText(bPotExceedsBankroll ? 'All In' : 'Pot');
+    this.layoutButtonIconText(btnFullPot);
+}
+
     // ==============================================================
     // HEADER (top bar) — ping display + settings/exit buttons
     // ==============================================================
@@ -267,8 +288,13 @@ setButtons() {
         texture: assets.btn_yellow, scaleX: 0.8, scaleY: 0.8, text: 'Call', 
         fontSize: '62px', sound: this.oSoundManager.check_sound 
     }, () => {
-        this.oSocketManager.emit(emitter.reqCall);
+        if (this.oButtons?.btn_call?.bAllInMode) {
+            this.oSocketManager.emit(emitter.reqRaise, { nRaiseAmount: this.oGameManager.nMyPlayerChips });
+        } else {
+            this.oSocketManager.emit(emitter.reqCall);
+        }
     }).setVisible(false);
+    btn_call.bAllInMode = false;
     this.container_buttons.add(btn_call);
 
     const btn_check = new Button(this, btn_call.x, btn_call.y, { 
@@ -285,6 +311,7 @@ setButtons() {
         text: 'Raise', fontSize: '62px' 
     }, () => {
         // Properly disable current container and enable raise container
+        this.refreshRaisePresetLabels();
         this.disableContainerButtons(this.container_buttons);
         this.container_buttons.setVisible(false);
         this.container_raise_buttons.setVisible(true);
@@ -355,7 +382,9 @@ setButtons() {
         texture: assets.btn_smallOrange, scaleX: 0.8, scaleY: 0.8, text: 'Pot', 
         fontSize: '62px', sound: this.oSoundManager.raise_sound 
     }, () => {
-        this.oGameManager.tempRaiseAmount = this.oGameManager.nPotAmount;
+        const potAmount = Number(this.oGameManager.nPotAmount) || 0;
+        const myChips = Number(this.oGameManager.nMyPlayerChips) || 0;
+        this.oGameManager.tempRaiseAmount = btn_fullPot.bActsAsAllIn ? myChips : potAmount;
         
         // Properly transition to confirm container
         this.disableContainerButtons(this.container_raise_buttons);
@@ -363,6 +392,7 @@ setButtons() {
         this.container_confirm_raise.setVisible(true);
         this.enableContainerButtons(this.container_confirm_raise);
     });
+    btn_fullPot.bActsAsAllIn = false;
     this.container_raise_buttons.add(btn_fullPot);
 
     const btn_allIn = new Button(this, btn_raise.x, btn_raise.y, { 
@@ -1003,7 +1033,8 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
                 break;
             case 'c':
                 this.oButtons.btn_call.setVisible(true);
-                this.oButtons.btn_call.btn_text.setText(`${_.appendMoneySymbolFront(callAmount)} Call`);
+                this.oButtons.btn_call.bAllInMode = false;
+                this.setCallButtonLabel(`${_.appendMoneySymbolFront(callAmount)} Call`);
                 break;
             case 'r':
                 this.oButtons.btn_raise.setVisible(true);
@@ -1017,7 +1048,9 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
                 this.setStandButtonLabel(this.oButtons.btn_stand.bCallStandMode ? 'Call/Stand' : 'Stand');
                 break;
             case 'a':
-                this.oButtons.btn_allInCommon.setVisible(true);
+                this.oButtons.btn_call.setVisible(true);
+                this.oButtons.btn_call.bAllInMode = true;
+                this.setCallButtonLabel('All In');
                 break;
             case 'ck':
                 this.oButtons.btn_check.setVisible(true);
@@ -1037,6 +1070,8 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
     
     this.oButtons.btn_fold.setVisible(false);
     this.oButtons.btn_call.setVisible(false);
+    this.oButtons.btn_call.bAllInMode = false;
+    this.setCallButtonLabel('Call');
     this.oButtons.btn_raise.setVisible(false);
     this.oButtons.btn_doubleDown.setVisible(false);
     this.oButtons.btn_allInCommon.setVisible(false);

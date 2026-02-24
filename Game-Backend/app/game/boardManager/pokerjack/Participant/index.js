@@ -80,6 +80,8 @@ class Participant extends Service {
 
   async raise(oData, callback) {
     try {
+      if (this.isDoubleDownLock) return callback({ error: 'Locked players cannot raise while standing/doubledown' });
+
       const bRaiseStand = oData?.bTakeCard === false;
       const nRaiseAmount = Number(oData.nRaiseAmount);
       if (!Number.isFinite(nRaiseAmount) || nRaiseAmount <= 0) return callback({ error: 'Raise amount is invalid' });
@@ -351,10 +353,12 @@ class Participant extends Service {
       if (playingPlayers.length === 1) return await this.oBoard.declareResult(playingPlayers, 'takeTurn: 1 player left');
 
       if (this.isDoubleDownLock) {
-        const bRoundOpenCheckState = this.aUserAction.includes('ck');
-        const bNeedsDefendRaise = !bRoundOpenCheckState && this.nLastBidChips < this.oBoard.nMinBet;
+        const bRoundOpenCheckState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
+        const nLockedToCallAmount = Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
+        const bNeedsDefendRaise = !bRoundOpenCheckState && nLockedToCallAmount > 0;
 
         if (!bNeedsDefendRaise) {
+          this.aUserAction = ['ck', 'f'];
           this.nPlayerTurnCount += 1;
           await this.oBoard.update({ aParticipant: [this.toJSON()] });
           return await this.passTurn();
@@ -408,21 +412,30 @@ class Participant extends Service {
         }
       }
       if (bIsAllPlayerCardLock) {
-        let maxScore = 0;
-        let winner = [];
+        const bHasPendingLockedDefend = this.oBoard.aParticipant.some(participant => {
+          if (participant.eState !== 'playing' || !participant.isDoubleDownLock) return false;
+          const bOpenCheckState = participant.aUserAction.includes('ck') && !participant.aUserAction.includes('c');
+          if (bOpenCheckState) return false;
+          return participant.nLastBidChips < this.oBoard.nMinBet;
+        });
 
-        for (const participant of this.oBoard.aParticipant) {
-          if (participant.eState == 'playing' && participant.nCardScore <= 21) {
-            if (participant.nCardScore > maxScore) {
-              maxScore = participant.nCardScore;
-              winner = [participant];
-            } else if (participant.nCardScore === maxScore) {
-              winner.push(participant);
+        if (!bHasPendingLockedDefend) {
+          let maxScore = 0;
+          let winner = [];
+
+          for (const participant of this.oBoard.aParticipant) {
+            if (participant.eState == 'playing' && participant.nCardScore <= 21) {
+              if (participant.nCardScore > maxScore) {
+                maxScore = participant.nCardScore;
+                winner = [participant];
+              } else if (participant.nCardScore === maxScore) {
+                winner.push(participant);
+              }
             }
           }
-        }
 
-        return await this.oBoard.declareResult(winner, 'passTurn: allPlayerCardLock winner');
+          return await this.oBoard.declareResult(winner, 'passTurn: allPlayerCardLock winner');
+        }
       }
 
       const aActiveParticipants = this.oBoard.aParticipant.filter(p => p.eState === 'playing');
