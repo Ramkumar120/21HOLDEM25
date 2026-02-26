@@ -38,6 +38,12 @@ class Board extends Service {
           this.nTableChips += betAmount;
           participant.nChips -= betAmount;
           participant.nLastBidChips = betAmount;
+          participant.nTotalBidChips = (participant.nTotalBidChips ?? 0) + betAmount;
+          if (participant.nChips <= 0) {
+            participant.nChips = 0;
+            participant.isAllInLock = true;
+            participant.aUserAction = ['f'];
+          }
 
           await Transaction.create({
             iUserId: participant.iUserId,
@@ -175,8 +181,15 @@ class Board extends Service {
         return await this.declareResult(aWinner, 'dealCommunityCard: aWinner in 3rd round');
       }
 
+      // New betting rounds open at the table big blind (not previous round's final bet).
+      // Proto nMinBet is the small blind in this codebase, so round-open min bet is x2.
+      const oProtoBlind = await BoardProtoType.findOne({ _id: this.iProtoId }, { _id: 0, nMinBet: 1 }).lean();
+      if (oProtoBlind?.nMinBet) {
+        this.nMinBet = oProtoBlind.nMinBet * 2;
+      }
+
       this.nTableRound++;
-      await this.update({ nTableRound: this.nTableRound });
+      await this.update({ nTableRound: this.nTableRound, nMinBet: this.nMinBet });
 
       // Round opener stays fixed within a hand: player to the left of the BB.
       const bigBlind = this.getParticipant(this.iBigBlindId);
@@ -223,38 +236,104 @@ class Board extends Service {
           nGameRound: this.nGameRound,
         });
 
-        let chipsPerWinner = (this.nTableChips - adminRakeAmount) / aWinner.length;
-        // if (chipsPerWinner % 1 !== 0) {
-        //   const flooredChips = Math.floor(chipsPerWinner);
-        //   const remainingDecimalChips = chipsPerWinner - flooredChips;
-        //   chipsPerWinner = flooredChips;
+        const getContribution = participant => Math.max(Number(participant.nTotalBidChips) || 0, 0);
+        const payoutByUserId = new Map();
+        const showdownEligible = this.aParticipant.filter(p => p.eState === 'playing' && p.nCardScore <= 21);
+        const showdownEligibleIds = new Set(showdownEligible.map(p => _.toString(p.iUserId)));
+        const contributedPlayers = this.aParticipant.filter(p => getContribution(p) > 0);
+        const contributionLevels = [...new Set(contributedPlayers.map(getContribution).filter(v => v > 0))].sort((a, b) => a - b);
+        const totalTrackedContrib = contributedPlayers.reduce((sum, p) => sum + getContribution(p), 0);
+        const nDistributablePot = this.nTableChips - adminRakeAmount;
+        const aSidePotSummary = [];
 
-        //   const previousParticipant = this.getPreviousParticipant(this.getParticipant(this.iUserTurn)?.nSeat);
-        //   if (!previousParticipant) log.red('previousParticipant not found in declareResult');
-        //   previousParticipant.nChips += remainingDecimalChips;
-        //   previousParticipant.nWinningAmount += remainingDecimalChips;
-        //   await previousParticipant.updateUser({ $inc: { nChips: remainingDecimalChips } });
-        // aTransactionData.push({
-        //   iUserId: previousParticipant.iUserId,
-        //   iBoardId: this._id,
-        //   nAmount: remainingDecimalChips,
-        //   eType: 'credit',
-        //   eMode: 'game',
-        //   eStatus: 'Success',
-        //   nGameRound: this.nGameRound,
-        // });
-        // }
+        const creditWinner = (participant, nAmount) => {
+          if (!(nAmount > 0)) return;
+          const key = _.toString(participant.iUserId);
+          payoutByUserId.set(key, (payoutByUserId.get(key) || 0) + nAmount);
+        };
 
-        for (const winner of aWinner) {
-          winner.eState = 'winner';
-          winner.nChips += chipsPerWinner;
-          winner.nWinningAmount += chipsPerWinner;
+        const distributeSinglePotFallback = () => {
+          const chipsPerWinner = nDistributablePot / aWinner.length;
+          for (const winner of aWinner) creditWinner(winner, chipsPerWinner);
+          aSidePotSummary.push({
+            eType: 'single-pot-fallback',
+            nAmount: this.nTableChips,
+            nNetAmount: nDistributablePot,
+            aWinner: aWinner.map(w => _.toString(w.iUserId)),
+          });
+        };
 
-          await winner.updateUser({ $inc: { nChips: chipsPerWinner, nGameWon: 1 } });
+        if (!contributionLevels.length || Math.abs(totalTrackedContrib - this.nTableChips) > 0.000001) {
+          distributeSinglePotFallback();
+        } else {
+          let nPrevLevel = 0;
+          for (const nLevel of contributionLevels) {
+            const aPotContributors = contributedPlayers.filter(p => getContribution(p) >= nLevel);
+            const nGrossPotAmount = (nLevel - nPrevLevel) * aPotContributors.length;
+            nPrevLevel = nLevel;
+            if (!(nGrossPotAmount > 0)) continue;
+
+            const aPotContestants = aPotContributors.filter(p => showdownEligibleIds.has(_.toString(p.iUserId)));
+            if (!aPotContestants.length) {
+              aSidePotSummary.push({
+                eType: 'unawarded-side-pot',
+                nAmount: nGrossPotAmount,
+                aContributor: aPotContributors.map(p => _.toString(p.iUserId)),
+              });
+              continue;
+            }
+
+            let nMaxScore = 0;
+            let aPotWinners = [];
+            for (const participant of aPotContestants) {
+              if (participant.nCardScore > nMaxScore) {
+                nMaxScore = participant.nCardScore;
+                aPotWinners = [participant];
+              } else if (participant.nCardScore === nMaxScore) {
+                aPotWinners.push(participant);
+              }
+            }
+
+            const nNetPotAmount = (nGrossPotAmount * nDistributablePot) / this.nTableChips;
+            const nPerWinner = nNetPotAmount / aPotWinners.length;
+            for (const winner of aPotWinners) creditWinner(winner, nPerWinner);
+
+            aSidePotSummary.push({
+              eType: 'side-pot',
+              nAmount: nGrossPotAmount,
+              nNetAmount: nNetPotAmount,
+              nScore: nMaxScore,
+              aContributor: aPotContributors.map(p => _.toString(p.iUserId)),
+              aWinner: aPotWinners.map(p => _.toString(p.iUserId)),
+            });
+          }
+        }
+
+        const aPayoutEntries = [...payoutByUserId.entries()];
+        let nDistributedAmount = aPayoutEntries.reduce((sum, [, nAmount]) => sum + nAmount, 0);
+        const nRemainder = nDistributablePot - nDistributedAmount;
+        if (Math.abs(nRemainder) > 0.000001 && Math.abs(nRemainder) <= 0.01 && aPayoutEntries.length) {
+          const [firstWinnerId] = aPayoutEntries[0];
+          payoutByUserId.set(firstWinnerId, (payoutByUserId.get(firstWinnerId) || 0) + nRemainder);
+          nDistributedAmount += nRemainder;
+          aSidePotSummary.push({ eType: 'rounding-adjustment', iUserId: firstWinnerId, nAmount: nRemainder });
+        } else if (Math.abs(nRemainder) > 0.01) {
+          aSidePotSummary.push({ eType: 'undistributed-balance', nAmount: nRemainder });
+        }
+
+        for (const participant of this.aParticipant) {
+          const nPayoutAmount = payoutByUserId.get(_.toString(participant.iUserId)) || 0;
+          if (!(nPayoutAmount > 0)) continue;
+
+          participant.eState = 'winner';
+          participant.nChips += nPayoutAmount;
+          participant.nWinningAmount += nPayoutAmount;
+
+          await participant.updateUser({ $inc: { nChips: nPayoutAmount, nGameWon: 1 } });
           aTransactionData.push({
-            iUserId: winner.iUserId,
+            iUserId: participant.iUserId,
             iBoardId: this._id,
-            nAmount: chipsPerWinner,
+            nAmount: nPayoutAmount,
             eType: 'credit',
             eMode: 'game',
             eStatus: 'Success',
@@ -263,6 +342,15 @@ class Board extends Service {
         }
 
         if (aTransactionData.length) await Transaction.insertMany(aTransactionData);
+        await this.saveLogs([
+          {
+            sAction: 'potDistribution',
+            eLogType: 'game',
+            nTableChips: this.nTableChips,
+            adminRakeAmount,
+            aSidePotSummary,
+          },
+        ]);
       }
       // ------------------------------ End of Pot Distribution ------------------------------
 
@@ -303,20 +391,35 @@ class Board extends Service {
   async resetTable() {
     try {
       const proto = await BoardProtoType.findOne({ _id: this.iProtoId }, { _id: 0, nMinBet: 1, nMinBuyIn: 1 }).lean();
+      const aAutoTopUp = [];
 
       for (const participant of this.aParticipant) {
         participant.aCardHand = [];
         participant.aUserAction = ['c', 'r', 'f', 'd'];
         participant.nCardScore = 0;
         participant.isDoubleDownLock = false;
+        participant.isAllInLock = false;
         participant.bHasAceAndBust = false;
         participant.nStandAtRound = 0;
         participant.nLastBidChips = 0;
+        participant.nTotalBidChips = 0;
         participant.nWinningAmount = 0;
         participant.nPlayerTurnCount = 0;
 
-        if (participant.bNextTurnLeave || participant.nChips < proto.nMinBet * 2) participant.eState = 'leave';
-        else participant.eState = 'waiting';
+        if (participant.bNextTurnLeave) {
+          participant.eState = 'leave';
+        } else if (participant.nChips < proto.nMinBet * 2) {
+          const user = await User.findOne({ _id: participant.iUserId }, { _id: 0, nChips: 1 }).lean();
+          const bCanAutoTopUp = user && Number(user.nChips) >= Number(proto.nMinBuyIn);
+
+          if (bCanAutoTopUp) {
+            participant.nChips = proto.nMinBuyIn;
+            participant.eState = 'waiting';
+            aAutoTopUp.push({ iUserId: participant.iUserId, nTopUpTo: proto.nMinBuyIn });
+          } else {
+            participant.eState = 'leave';
+          }
+        } else participant.eState = 'waiting';
 
         await this.update({ aParticipant: [participant.toJSON()] });
       }
@@ -357,6 +460,7 @@ class Board extends Service {
 
       await this.saveLogs([
         { sAction: 'resetTable', eLogType: 'game', aParticipant: this.aParticipant.map(p => ({ iUserId: p.iUserId, sUserName: p.sUserName, eState: p.eState })) },
+        ...(aAutoTopUp.length ? [{ sAction: 'autoTopUpChips', eLogType: 'game', aAutoTopUp }] : []),
       ]);
 
       this.initializeGame();

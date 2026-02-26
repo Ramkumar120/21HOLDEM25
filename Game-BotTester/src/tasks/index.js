@@ -4,6 +4,7 @@ const foldFirstOpportunity = require('./foldFirstOpportunity');
 const spiderRandom = require('./spiderRandom');
 const scriptedActions = require('./scriptedActions');
 const ddOpenSkipCheck = require('./ddOpenSkipCheck');
+const sidePotRepro = require('./sidePotRepro');
 
 const TASKS = {
   observe,
@@ -12,6 +13,7 @@ const TASKS = {
   'spider-random': spiderRandom,
   'scripted-actions': scriptedActions,
   'dd-open-skip-check': ddOpenSkipCheck,
+  'side-pot-repro': sidePotRepro,
 };
 
 function getTaskFactory(name) {

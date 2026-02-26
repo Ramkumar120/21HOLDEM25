@@ -13,10 +13,12 @@ class Service {
     this.bNextTurnLeave = oParticipantData.bNextTurnLeave ?? false;
     this.aUserAction = oParticipantData.aUserAction ?? ['c', 'r', 'f', 'd'];
     this.isDoubleDownLock = oParticipantData.isDoubleDownLock ?? false;
+    this.isAllInLock = oParticipantData.isAllInLock ?? false;
     this.nCardScore = oParticipantData.nCardScore ?? 0;
     this.sAvatar = oParticipantData.sAvatar ?? '';
     this.bHasAceAndBust = oParticipantData.bHasAceAndBust ?? false;
     this.nLastBidChips = oParticipantData.nLastBidChips ?? 0;
+    this.nTotalBidChips = oParticipantData.nTotalBidChips ?? 0;
     this.nStandAtRound = oParticipantData.nStandAtRound;
     this.nWinningAmount = oParticipantData.nWinningAmount ?? 0;
     this.nPlayerTurnCount = oParticipantData.nPlayerTurnCount ?? 0;
@@ -223,11 +225,13 @@ class Service {
       'bNextTurnLeave',
       'aUserAction',
       'isDoubleDownLock',
+      'isAllInLock',
       'nCardScore',
       'sAvatar',
       'bHasAceAndBust',
       'sRootSocket',
       'nLastBidChips',
+      'nTotalBidChips',
       'nStandAtRound',
       'nWinningAmount',
       'nPlayerTurnCount',

@@ -179,6 +179,12 @@ class BotClient extends EventEmitter {
       case 'raiseStand':
         ack = await sendWithMode('reqRaise', { nRaiseAmount: normalized.amount, bTakeCard: false });
         break;
+      case 'allIn': {
+        const allInAmount = Number(this.state?.myChips);
+        if (!Number.isFinite(allInAmount) || allInAmount <= 0) throw new Error('Cannot all-in: unknown or zero chip stack');
+        ack = await sendWithMode('reqRaise', { nRaiseAmount: allInAmount });
+        break;
+      }
       default:
         throw new Error(`Unknown normalized action: ${normalized.type}`);
     }
@@ -208,6 +214,9 @@ class BotClient extends EventEmitter {
       d: { type: 'doubleDown', requires: 'd', label: 'doubleDown' },
       dd: { type: 'doubleDown', requires: 'd', label: 'doubleDown' },
       doubledown: { type: 'doubleDown', requires: 'd', label: 'doubleDown' },
+      a: { type: 'allIn', requires: 'a', label: 'allIn' },
+      allin: { type: 'allIn', requires: 'a', label: 'allIn' },
+      'all-in': { type: 'allIn', requires: 'a', label: 'allIn' },
     };
     if (aliases[raw]) return aliases[raw];
 

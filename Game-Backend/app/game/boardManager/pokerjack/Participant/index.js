@@ -21,6 +21,12 @@ class Participant extends Service {
       this.oBoard.nTableChips += nCallAmount;
       this.oBoard.nMaxBet = this.oBoard.nTableChips;
       this.nLastBidChips += nCallAmount;
+      this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nCallAmount;
+      if (!bCallStand && this.nChips <= 0) {
+        this.nChips = 0;
+        this.isAllInLock = true;
+        this.aUserAction = ['f'];
+      }
 
       if (nCallAmount > 0) {
         await Transaction.create({
@@ -80,7 +86,10 @@ class Participant extends Service {
 
   async raise(oData, callback) {
     try {
-      if (this.isDoubleDownLock) return callback({ error: 'Locked players cannot raise while standing/doubledown' });
+      if (this.isDoubleDownLock || this.isAllInLock) return callback({ error: 'Locked players cannot raise while standing/doubledown' });
+
+      const bShortAllInCallMode = this.aUserAction.includes('a') && !this.aUserAction.includes('r') && !this.aUserAction.includes('c');
+      if (bShortAllInCallMode) return await this.allInShortCall(callback);
 
       const bRaiseStand = oData?.bTakeCard === false;
       const nRaiseAmount = Number(oData.nRaiseAmount);
@@ -102,6 +111,12 @@ class Participant extends Service {
       this.oBoard.nTableChips += nTotalDebit;
       this.oBoard.nMaxBet = this.oBoard.nTableChips;
       this.nLastBidChips += nTotalDebit;
+      this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nTotalDebit;
+      if (!bRaiseStand && this.nChips <= 0) {
+        this.nChips = 0;
+        this.isAllInLock = true;
+        this.aUserAction = ['f'];
+      }
 
       await Transaction.create({
         iUserId: this.iUserId,
@@ -160,6 +175,68 @@ class Participant extends Service {
     }
   }
 
+  async allInShortCall(callback) {
+    try {
+      const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
+      const nToCallAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
+      const nAllInAmount = Math.max(Number(this.nChips) || 0, 0);
+
+      if (nToCallAmount <= 0) return callback({ error: 'All-in call is not available in open/check state' });
+      if (nAllInAmount <= 0) return callback({ error: 'No chips available for all-in' });
+      if (nAllInAmount >= nToCallAmount) return callback({ error: 'All-in short-call path is only valid when chips are below call amount' });
+
+      await this.updateUser({ $inc: { nChips: -nAllInAmount } });
+      this.nChips = 0;
+      this.oBoard.nTableChips += nAllInAmount;
+      this.oBoard.nMaxBet = this.oBoard.nTableChips;
+      this.nLastBidChips += nAllInAmount;
+      this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nAllInAmount;
+      this.isAllInLock = true;
+      this.aUserAction = ['f'];
+
+      await Transaction.create({
+        iUserId: this.iUserId,
+        iBoardId: this.oBoard._id,
+        nAmount: nAllInAmount,
+        eType: 'debit',
+        eMode: 'game',
+        eStatus: 'Success',
+        nGameRound: this.oBoard.nGameRound,
+      });
+
+      await this.oBoard.update({
+        nTableChips: this.oBoard.nTableChips,
+        nMaxBet: this.oBoard.nMaxBet,
+        aParticipant: [this.toJSON()],
+      });
+
+      await this.oBoard.emit('resCall', {
+        iUserId: this.iUserId,
+        nTableChips: this.oBoard.nTableChips,
+        nLastBidChips: nAllInAmount,
+        nChips: this.nChips,
+        nMinBet: this.oBoard.nMinBet,
+        bAllIn: true,
+        bShortCall: true,
+        nShortAmount: Math.max(nToCallAmount - nAllInAmount, 0),
+      });
+      await this.oBoard.saveLogs([
+        {
+          sAction: 'allin-short-call',
+          eLogType: 'game',
+          iUserId: this.iUserId,
+          nToCallAmount,
+          nAllInAmount,
+          nShortAmount: Math.max(nToCallAmount - nAllInAmount, 0),
+        },
+      ]);
+
+      return await this.passTurn();
+    } catch (error) {
+      console.log('Error in allInShortCall method:', error);
+    }
+  }
+
   async doubleDown(oData, callback) {
     try {
       const nDoubleDownAmount = this.oBoard.nMinBet * 2;
@@ -176,6 +253,7 @@ class Participant extends Service {
       this.oBoard.nTableChips += nDoubleDownAmount;
       this.oBoard.nMaxBet = this.oBoard.nTableChips;
       this.nLastBidChips = nDoubleDownAmount;
+      this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nDoubleDownAmount;
 
       await Transaction.create({
         iUserId: this.iUserId,
@@ -253,6 +331,7 @@ class Participant extends Service {
         this.oBoard.nTableChips += nStandAmount;
         this.oBoard.nMaxBet = this.oBoard.nTableChips;
         this.nLastBidChips += nStandAmount;
+        this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nStandAmount;
 
         await Transaction.create({
           iUserId: this.iUserId,
@@ -352,6 +431,12 @@ class Participant extends Service {
 
       if (playingPlayers.length === 1) return await this.oBoard.declareResult(playingPlayers, 'takeTurn: 1 player left');
 
+      if (this.isAllInLock) {
+        this.nPlayerTurnCount += 1;
+        await this.oBoard.update({ aParticipant: [this.toJSON()] });
+        return await this.passTurn();
+      }
+
       if (this.isDoubleDownLock) {
         const bRoundOpenCheckState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
         const nLockedToCallAmount = Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
@@ -442,6 +527,7 @@ class Participant extends Service {
       if (aActiveParticipants.length === 1) return await this.oBoard.declareResult(aActiveParticipants, 'passTurn: 1 player left');
 
       const bRoundSettled = aActiveParticipants.every(p => {
+        if (p.isAllInLock) return true;
         const bCheckOpenState = p.aUserAction.includes('ck') && !p.aUserAction.includes('c');
         const nRequiredContribution = bCheckOpenState ? 0 : this.oBoard.nMinBet;
         return p.nPlayerTurnCount > 0 && p.nLastBidChips >= nRequiredContribution;
