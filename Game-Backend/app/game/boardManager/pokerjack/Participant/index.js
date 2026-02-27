@@ -16,6 +16,9 @@ class Participant extends Service {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
       }
 
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
+
       await this.updateUser({ $inc: { nChips: -nCallAmount } });
       this.nChips -= nCallAmount;
       this.oBoard.nTableChips += nCallAmount;
@@ -105,6 +108,9 @@ class Participant extends Service {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
       }
 
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
+
       await this.updateUser({ $inc: { nChips: -nTotalDebit } });
       this.nChips -= nTotalDebit;
       this.oBoard.nMinBet = nNextMinBet;
@@ -185,6 +191,9 @@ class Participant extends Service {
       if (nAllInAmount <= 0) return callback({ error: 'No chips available for all-in' });
       if (nAllInAmount >= nToCallAmount) return callback({ error: 'All-in short-call path is only valid when chips are below call amount' });
 
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
+
       await this.updateUser({ $inc: { nChips: -nAllInAmount } });
       this.nChips = 0;
       this.oBoard.nTableChips += nAllInAmount;
@@ -244,6 +253,9 @@ class Participant extends Service {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
       }
       if (nDoubleDownAmount < this.oBoard.nMinBet) return callback({ error: 'Double down amount is should not be less than min bet' });
+
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
 
       this.isDoubleDownLock = true;
       this.aUserAction = ['c', 'f'];
@@ -320,6 +332,9 @@ class Participant extends Service {
       if (this.nChips < nStandAmount) {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
       }
+
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
 
       this.isDoubleDownLock = true; // lock double down because player is stand & its same functionality
       this.nStandAtRound = this.oBoard.nTableRound;
@@ -410,6 +425,9 @@ class Participant extends Service {
 
   async check(oData, callback) {
     try {
+      // Player has acted on their current turn; prevent stale timeout fold on this turn.
+      await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
+
       await this.passTurn();
       return await this.oBoard.saveLogs([{ sAction: 'check', eLogType: 'game', iUserId: this.iUserId }]);
     } catch (error) {

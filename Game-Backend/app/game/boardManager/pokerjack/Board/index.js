@@ -2,6 +2,8 @@ const Service = require('./lib/Service');
 const { redis, deck, mongodb } = require('../../../../utils');
 const { PokerFinishGame, PokerBoard, BoardProtoType, Transaction, User, Setting, Analytics } = require('../../../../models');
 
+const MAX_COMMUNITY_CARDS = 5;
+
 class Board extends Service {
   async collectBootAmount() {
     try {
@@ -106,7 +108,7 @@ class Board extends Service {
       for (const participant of this.aParticipant) {
         if (participant.eState !== 'playing') continue;
 
-        if (this.nTableRound < 3) {
+        if (this.nTableRound < MAX_COMMUNITY_CARDS) {
           participant.nLastBidChips = 0;
           participant.nPlayerTurnCount = 0;
           participant.aUserAction = participant.aUserAction.map(action => (action === 'c' ? 'ck' : action === 'd' ? 's' : action));
@@ -163,7 +165,7 @@ class Board extends Service {
       }
       if (allParticipantsAreBust) return await this.declareResult([], 'dealCommunityCard: allParticipantsAreBust');
 
-      if (this.nTableRound == 3) {
+      if (this.nTableRound == MAX_COMMUNITY_CARDS) {
         let maxScore = 0;
         let aWinner = [];
 
@@ -178,7 +180,7 @@ class Board extends Service {
           }
         }
 
-        return await this.declareResult(aWinner, 'dealCommunityCard: aWinner in 3rd round');
+        return await this.declareResult(aWinner, `dealCommunityCard: aWinner in ${MAX_COMMUNITY_CARDS}th round`);
       }
 
       // New betting rounds open at the table big blind (not previous round's final bet).

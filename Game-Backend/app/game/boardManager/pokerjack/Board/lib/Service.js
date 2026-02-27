@@ -8,7 +8,7 @@ class Service {
     this._id = oBoardData._id;
     this.iProtoId = oBoardData.iProtoId;
     this.aParticipant = oBoardData.aParticipant ? oBoardData.aParticipant.map(p => new Participant(p, this)) : [];
-    this.aCommunityCard = oBoardData.aCommunityCard ?? []; // max three cards
+    this.aCommunityCard = oBoardData.aCommunityCard ?? []; // max five cards
     this.aDeck = oBoardData.aDeck ?? [];
     this.oSocketId = oBoardData.oSocketId;
     this.eState = oBoardData.eState;

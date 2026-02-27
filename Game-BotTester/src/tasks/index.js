@@ -5,6 +5,7 @@ const spiderRandom = require('./spiderRandom');
 const scriptedActions = require('./scriptedActions');
 const ddOpenSkipCheck = require('./ddOpenSkipCheck');
 const sidePotRepro = require('./sidePotRepro');
+const fiveCommunityProbe = require('./fiveCommunityProbe');
 
 const TASKS = {
   observe,
@@ -14,6 +15,7 @@ const TASKS = {
   'scripted-actions': scriptedActions,
   'dd-open-skip-check': ddOpenSkipCheck,
   'side-pot-repro': sidePotRepro,
+  'five-community-probe': fiveCommunityProbe,
 };
 
 function getTaskFactory(name) {
