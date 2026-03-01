@@ -14,11 +14,10 @@ const captured = {
   updates: [],
 };
 const forceExitTimer = setTimeout(() => {
-  console.error('FAIL sidePotDeclareResultSmoke (timeout)');
+  console.error('FAIL normalPotDeclareResultSmoke (timeout)');
   process.exit(2);
 }, 15000);
 
-// Stub DB/model side effects so this runs as a deterministic local smoke test.
 models.Setting.findOne = () => ({
   lean: async () => ({ nRakeAmount: 0 }),
 });
@@ -56,9 +55,8 @@ function makeParticipant({ id, score, contribution, isAllInLock = false }) {
 }
 
 async function run() {
-  const p1 = makeParticipant({ id: 'p1', score: 20, contribution: 100, isAllInLock: true });
-  const p2 = makeParticipant({ id: 'p2', score: 18, contribution: 200 });
-  const p3 = makeParticipant({ id: 'p3', score: 19, contribution: 200 });
+  const p1 = makeParticipant({ id: 'p1', score: 18, contribution: 200 });
+  const p2 = makeParticipant({ id: 'p2', score: 19, contribution: 300 });
 
   const fakeBoard = {
     _id: 'board-test',
@@ -67,7 +65,7 @@ async function run() {
     nTableChips: 500,
     eState: 'playing',
     oSetting: { nRoundStartsIn: 1000 },
-    aParticipant: [p1, p2, p3],
+    aParticipant: [p1, p2],
     async getScheduler() {
       return null;
     },
@@ -84,36 +82,31 @@ async function run() {
     },
   };
 
-  await Board.prototype.declareResult.call(fakeBoard, [p1], 'sidePotDeclareResultSmoke');
+  await Board.prototype.declareResult.call(fakeBoard, [p2], 'normalPotDeclareResultSmoke');
 
-  assert.strictEqual(p1.nWinningAmount, 300, 'p1 should win main pot (300)');
-  assert.strictEqual(p2.nWinningAmount, 0, 'p2 should not win any pot');
-  assert.strictEqual(p3.nWinningAmount, 200, 'p3 should win side pot (200)');
-  assert.strictEqual(p1.eState, 'winner', 'p1 should be marked winner');
-  assert.strictEqual(p3.eState, 'winner', 'p3 should be marked winner');
+  assert.strictEqual(p1.nWinningAmount, 0, 'losing player should not receive chips from an ordinary unequal-contribution pot');
+  assert.strictEqual(p2.nWinningAmount, 500, 'winner should receive the full pot');
+  assert.strictEqual(p2.eState, 'winner', 'winner should be marked winner');
 
   const potLog = captured.logs.find(log => log.sAction === 'potDistribution');
   assert.ok(potLog, 'potDistribution log should be recorded');
+  const singlePot = Array.isArray(potLog.aSidePotSummary)
+    ? potLog.aSidePotSummary.find(x => x.eType === 'single-pot-fallback')
+    : null;
   const sidePots = Array.isArray(potLog.aSidePotSummary) ? potLog.aSidePotSummary.filter(x => x.eType === 'side-pot') : [];
-  assert.strictEqual(sidePots.length, 2, 'expected main pot + one side pot summaries');
 
-  const mainPot = sidePots.find(p => p.nAmount === 300);
-  const sidePot = sidePots.find(p => p.nAmount === 200);
-  assert.ok(mainPot, 'main pot summary (300) missing');
-  assert.ok(sidePot, 'side pot summary (200) missing');
-  assert.deepStrictEqual(mainPot.aWinner, ['p1'], 'main pot should go to p1');
-  assert.deepStrictEqual(sidePot.aWinner, ['p3'], 'side pot should go to p3');
+  assert.ok(singlePot, 'expected a single-pot payout summary');
+  assert.strictEqual(sidePots.length, 0, 'ordinary unequal contributions should not create side pots');
 
-  console.log('PASS sidePotDeclareResultSmoke');
+  console.log('PASS normalPotDeclareResultSmoke');
   console.log(
     JSON.stringify(
       {
         payouts: {
           p1: p1.nWinningAmount,
           p2: p2.nWinningAmount,
-          p3: p3.nWinningAmount,
         },
-        sidePots: sidePots.map(p => ({ nAmount: p.nAmount, aWinner: p.aWinner })),
+        payoutSummary: potLog.aSidePotSummary,
       },
       null,
       2
@@ -128,7 +121,7 @@ run()
   })
   .catch(error => {
     clearTimeout(forceExitTimer);
-    console.error('FAIL sidePotDeclareResultSmoke');
+    console.error('FAIL normalPotDeclareResultSmoke');
     console.error(error.stack || error.message || String(error));
     process.exit(1);
   });

@@ -11,6 +11,7 @@ import 'assets/scss/main.scss'
 import { ToastContainer } from 'react-toastify'
 import reportWebVitals from 'reportWebVitals'
 import NetworkStatus from 'shared/components/NetworkStatus';
+
 const root = ReactDOM.createRoot(document.getElementById('root'))
 
 root.render(

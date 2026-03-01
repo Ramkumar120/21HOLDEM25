@@ -439,9 +439,6 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
           const currentTime = Date.now();
           if (currentTime - lastBeepTime >= 1000) {
             if (iUserId == this.scene.iUserId) {
-              if (this.scene.oSoundManager.timer_sound.isPlaying) {
-                this.scene.oSoundManager.timer_sound.stop();
-              }
               this.scene.oSoundManager.playSound(
                 this.scene.oSoundManager.timer_sound,
                 false
@@ -464,6 +461,7 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
   }
   resetTurnTimer() {
     clearInterval(this.turnInterval);
+    this.scene.oSoundManager.stopSound(this.scene.oSoundManager.timer_sound);
     this.turn_timer.clearTint();
     this.turn_timer.setVisible(false);
   }

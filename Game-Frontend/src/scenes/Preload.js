@@ -90,11 +90,11 @@ import doubleDown_icon from '../assets/images/icons/doubleDown_icon.png'
 import allIn_icon from '../assets/images/icons/allIn_icon.png'
 import stand_icon from '../assets/images/icons/stand_icon.png'
 import check_icon from '../assets/images/icons/check_icon.png'
-// sound
 import bg_music from '../assets/sounds/bg_music.mp3'
 import winAnimation_sound from '../assets/sounds/winAnimation_sound.mp3'
 import winCoin_sound from '../assets/sounds/winCoin_sound.mp3'
 import coin_sound from '../assets/sounds/coin_sound.mp3'
+import chipsIn_sound from '../assets/sounds/chipsIn.mp3'
 import card_sound from '../assets/sounds/card_sound.mp3'
 import click_sound from '../assets/sounds/click_sound.mp3'
 import bust_sound from '../assets/sounds/bust_sound.mp3'
@@ -102,7 +102,7 @@ import fold_sound from '../assets/sounds/fold_sound.mp3'
 import timer_sound from '../assets/sounds/timer_sound.mp3'
 import raise_sound from '../assets/sounds/raise_sound.mp3'
 import check_sound from '../assets/sounds/check_sound.mp3'
-
+import doubleDownSound from '../assets/sounds/DD.m4a'
 import NeuePlakCondensed from '../assets/fonts/game/NeuePlak-CondRegular.ttf'
 import TTCommons from '../assets/fonts/game/TTCommons-Regular.ttf'
 import playerFont from '../assets/fonts/game/player_font.ttf'
@@ -189,11 +189,11 @@ export default class Preload extends Phaser.Scene {
         this.load.image('allIn_icon', allIn_icon);
         this.load.image('stand_icon', stand_icon);
         this.load.image('check_icon', check_icon);
-        // sound
         this.load.audio('bg_music', bg_music);
         this.load.audio('winAnimation_sound', winAnimation_sound);
         this.load.audio('winCoin_sound', winCoin_sound);
         this.load.audio('coin_sound', coin_sound);
+        this.load.audio('chipsIn_sound', chipsIn_sound);
         this.load.audio('card_sound', card_sound);
         this.load.audio('click_sound', click_sound);
         this.load.audio('bust_sound', bust_sound);
@@ -201,6 +201,7 @@ export default class Preload extends Phaser.Scene {
         this.load.audio('timer_sound', timer_sound);
         this.load.audio('raise_sound', raise_sound);
         this.load.audio('check_sound', check_sound);
+        this.load.audio('doubleDown_sound', doubleDownSound);
     }
     editorCreate() {
         const bg = this.add.image(config.centerX, config.centerY, 'game_bg');

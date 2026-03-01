@@ -1,6 +1,17 @@
 const boardManager = require('../../game/boardManager');
 const { queue } = require('../../utils');
 
+const REACTION_EMOJIS = new Set([
+  '😀',
+  '😂',
+  '😎',
+  '🔥',
+  '👏',
+  '😮',
+  '😈',
+  '💥',
+]);
+
 class PlayerListener {
   constructor(iBoardId, iUserId) {
     this.iBoardId = iBoardId;
@@ -42,6 +53,9 @@ class PlayerListener {
         break;
       case 'reqCheck':
         this.check(oData, participant, callback);
+        break;
+      case 'reqReaction':
+        this.reaction(oData, participant, callback);
         break;
       default:
         log.red('Unknown event:: ', sEventName);
@@ -132,6 +146,24 @@ class PlayerListener {
       await queue.addJob(this.iBoardId, { sEventName: 'reqLeave', iBoardId: this.iBoardId, iUserId: this.iUserId });
     } catch (error) {
       console.log('Error in PlayerListener leave method:', error);
+      this.logError(error, callback);
+    }
+  }
+
+  async reaction(oData, participant, callback) {
+    try {
+      const sEmoji = typeof oData?.sEmoji === 'string' ? oData.sEmoji.trim() : '';
+      if (!REACTION_EMOJIS.has(sEmoji)) return this.logError('Invalid reaction', callback);
+
+      await participant.oBoard.emit('resReaction', {
+        iUserId: String(participant.iUserId),
+        nSeat: participant.nSeat,
+        sEmoji,
+      });
+
+      callback(null, { success: true });
+    } catch (error) {
+      console.log('Error in PlayerListener reaction method:', error);
       this.logError(error, callback);
     }
   }

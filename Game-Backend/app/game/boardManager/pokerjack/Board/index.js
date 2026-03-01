@@ -245,6 +245,10 @@ class Board extends Service {
         const contributedPlayers = this.aParticipant.filter(p => getContribution(p) > 0);
         const contributionLevels = [...new Set(contributedPlayers.map(getContribution).filter(v => v > 0))].sort((a, b) => a - b);
         const totalTrackedContrib = contributedPlayers.reduce((sum, p) => sum + getContribution(p), 0);
+        const maxContribution = contributedPlayers.reduce((max, p) => Math.max(max, getContribution(p)), 0);
+        const hasCappedAllInContribution = contributedPlayers.some(
+          participant => participant.isAllInLock && getContribution(participant) > 0 && getContribution(participant) < maxContribution
+        );
         const nDistributablePot = this.nTableChips - adminRakeAmount;
         const aSidePotSummary = [];
 
@@ -265,7 +269,7 @@ class Board extends Service {
           });
         };
 
-        if (!contributionLevels.length || Math.abs(totalTrackedContrib - this.nTableChips) > 0.000001) {
+        if (!hasCappedAllInContribution || !contributionLevels.length || Math.abs(totalTrackedContrib - this.nTableChips) > 0.000001) {
           distributeSinglePotFallback();
         } else {
           let nPrevLevel = 0;

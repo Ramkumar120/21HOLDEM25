@@ -80,12 +80,14 @@ export default class Settings extends Phaser.GameObjects.Container {
         })
     }
     soundToggler = (isSoundOn) => {
-        this.scene.oSoundManager.isSoundOn = !isSoundOn;
+        this.scene.oSoundManager.setSoundEnabled(!isSoundOn);
+        window.FXOverlay?.setSoundEnabled?.(false);
         this.updateSoundSwitcher(this.scene.oSoundManager.isSoundOn);
         this.updateSetting();
     }
     musicToggler = (isMusicOn) => {
-        this.scene.oSoundManager.isMusicOn = !isMusicOn;
+        this.scene.oSoundManager.setMusicEnabled(!isMusicOn);
+        window.FXOverlay?.setMusicEnabled?.(false);
         this.updateMusicSwitcher(this.scene.oSoundManager.isMusicOn);
         if (this.scene.oSoundManager.isMusicOn) {
             this.scene.oSoundManager.playMusic(this.scene.oSoundManager.bg_music, true);

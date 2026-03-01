@@ -120,6 +120,222 @@ layoutButtonIconText(btn) {
     }
 }
 
+getFXOverlay() {
+    if (typeof window === 'undefined' || !window.FXOverlay) return null;
+    return window.FXOverlay;
+}
+
+callFXOverlay(effectName, ...args) {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay) return false;
+        const effect = overlay[effectName];
+        if (typeof effect !== 'function') return false;
+        return effect.apply(overlay, args);
+    } catch (_error) {
+        return false;
+    }
+}
+
+registerFXOverlayPotAnchor() {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay || typeof overlay.setAnchor !== 'function' || !this.table || !this.oPotAmount?.pot_amount_base) return false;
+
+        const potBase = this.oPotAmount.pot_amount_base;
+
+        overlay.setAnchor('table', () => this.getFXOverlayScreenAnchor(this.table, {
+            width: this.table.displayWidth * 0.52,
+            height: this.table.displayHeight * 0.30,
+            offsetY: this.table.displayHeight * 0.02,
+        }));
+        overlay.setAnchor('pot', () => this.getFXOverlayScreenAnchor(potBase, {
+            width: potBase.displayWidth,
+            height: potBase.displayHeight,
+        }));
+        overlay.setAnchor('mySeat', () => {
+            const myPlayer = this.players && this.players.get ? this.players.get(this.iUserId) : null;
+            return this.getFXOverlayProfileImageAnchor(myPlayer && myPlayer.playerProfile);
+        });
+        overlay.setAnchor('mySeatDock', () => {
+            const myPlayer = this.findPlayerByUserId(this.iUserId);
+            return this.getFXOverlayProfileImageAnchor(myPlayer && myPlayer.playerProfile);
+        });
+        overlay.setAnchor('potPile', () => this.getFXOverlayScreenAnchor(potBase, {
+            width: 126,
+            height: 96,
+            offsetX: potBase.displayWidth * 0.48,
+            offsetY: -2,
+        }));
+        overlay.setPotAmount && overlay.setPotAmount(this.oGameManager?.nPotAmount || 0);
+
+        return true;
+    } catch (_error) {
+        return false;
+    }
+}
+
+getFXOverlayScreenAnchor(gameObject, options = {}) {
+    try {
+        const canvas = this.game?.canvas;
+        const sceneWidth = this.scale?.width || config.width;
+        const sceneHeight = this.scale?.height || config.height;
+        if (!canvas || !gameObject || !sceneWidth || !sceneHeight) return null;
+
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+
+        const scaleX = rect.width / sceneWidth;
+        const scaleY = rect.height / sceneHeight;
+        const x = Number(gameObject.x || 0) + Number(options.offsetX || 0);
+        const y = Number(gameObject.y || 0) + Number(options.offsetY || 0);
+        const width = Number(options.width ?? gameObject.displayWidth ?? 0);
+        const height = Number(options.height ?? gameObject.displayHeight ?? 0);
+
+        return {
+            x: rect.left + x * scaleX,
+            y: rect.top + y * scaleY,
+            width: width * scaleX,
+            height: height * scaleY,
+        };
+    } catch (_error) {
+        return null;
+    }
+}
+
+getFXOverlayPlayerAnchor(playerProfile) {
+    if (!playerProfile) return null;
+
+    const scale = playerProfile?.container_profile?.scaleX || 1;
+    return this.getFXOverlayScreenAnchor(playerProfile, {
+        width: 220 * scale,
+        height: 200 * scale,
+        offsetY: 70 * scale,
+    });
+}
+
+getFXOverlayProfileImageAnchor(playerProfile) {
+    if (!playerProfile || !playerProfile.profile) return this.getFXOverlayPlayerAnchor(playerProfile);
+
+    const canvas = this.game?.canvas;
+    const sceneWidth = this.scale?.width || config.width;
+    const sceneHeight = this.scale?.height || config.height;
+    if (!canvas || !sceneWidth || !sceneHeight) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+
+    const scaleX = rect.width / sceneWidth;
+    const scaleY = rect.height / sceneHeight;
+    const containerScale = playerProfile?.container_profile?.scaleX || 1;
+    const image = playerProfile.profile;
+    const x = Number(playerProfile.x || 0) + (Number(image.x || 0) * containerScale);
+    const y = Number(playerProfile.y || 0) + (Number(image.y || 0) * containerScale);
+    const width = Number(image.displayWidth || 0) * containerScale;
+    const height = Number(image.displayHeight || 0) * containerScale;
+
+    return {
+        x: rect.left + x * scaleX,
+        y: rect.top + y * scaleY,
+        width: width * scaleX,
+        height: height * scaleY,
+    };
+}
+
+findPlayerByUserId(iUserId) {
+    if (this.players.has(iUserId)) return this.players.get(iUserId);
+
+    const sTargetUserId = String(iUserId);
+    for (const [sPlayerId, player] of this.players.entries()) {
+        if (String(sPlayerId) === sTargetUserId) return player;
+        if (String(player?.iUserId) === sTargetUserId) return player;
+    }
+
+    return null;
+}
+
+playPlayerBetFX(playerProfile, effectName, amount, options = {}) {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay || typeof overlay.setAnchor !== 'function') return false;
+
+        overlay.setAnchor('betSource', () => this.getFXOverlayPlayerAnchor(playerProfile));
+        const result = this.callFXOverlay(effectName, amount, {
+            source: 'betSource',
+            target: 'potPile',
+            potAmount: this.oGameManager.nPotAmount + (Number(amount) || 0),
+            audioAction: options.audioAction,
+        });
+        window.setTimeout(() => {
+            try {
+                overlay.clearAnchor && overlay.clearAnchor('betSource');
+            } catch (_error) {}
+        }, 1200);
+        return result;
+    } catch (_error) {
+        return false;
+    }
+}
+
+playWinPotFX(playerProfile, amount) {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay || typeof overlay.setAnchor !== 'function') return false;
+
+        overlay.setAnchor('payoutTarget', () => this.getFXOverlayPlayerAnchor(playerProfile));
+        const result = this.callFXOverlay('winPot', amount, {
+            source: 'potPile',
+            target: 'payoutTarget',
+        });
+        window.setTimeout(() => {
+            try {
+                overlay.clearAnchor && overlay.clearAnchor('payoutTarget');
+            } catch (_error) {}
+        }, 1400);
+        return result;
+    } catch (_error) {
+        return false;
+    }
+}
+
+focusFXOverlayPlayer(playerProfile) {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay || typeof overlay.setAnchor !== 'function') return false;
+
+        overlay.setAnchor('activePlayer', () => this.getFXOverlayPlayerAnchor(playerProfile));
+        return this.callFXOverlay('focusPlayer');
+    } catch (_error) {
+        return false;
+    }
+}
+
+clearFXOverlayFocus() {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay) return false;
+        overlay.clearAnchor && overlay.clearAnchor('activePlayer');
+        return this.callFXOverlay('clearFocus');
+    } catch (_error) {
+        return false;
+    }
+}
+
+clearFXOverlayPotAnchor() {
+    try {
+        const overlay = this.getFXOverlay();
+        if (!overlay || typeof overlay.clearAnchor !== 'function') return false;
+        overlay.clearAnchor('pot');
+        overlay.clearAnchor('table');
+        overlay.clearAnchor('betSource');
+        overlay.clearAnchor('activePlayer');
+        overlay.clearAnchor('mySeat');
+        return true;
+    } catch (_error) {
+        return false;
+    }
+}
+
 setStandButtonLabel(label = 'Stand') {
     const btn = this.oButtons?.btn_stand;
     if (!btn?.btn_text) return;
@@ -278,7 +494,7 @@ refreshRaisePresetLabels() {
 setButtons() {
     const btn_fold = new Button(this, config.centerX - 655, config.height - 70, { 
         texture: assets.btn_blue, scaleX: 0.8, scaleY: 0.8, iconTexture: assets.fold_icon, 
-        text: 'Fold', fontSize: '62px', sound: this.oSoundManager.fold_sound 
+        text: 'Fold', fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         this.oSocketManager.emit(emitter.reqFold);
     }).setVisible(false);
@@ -286,7 +502,7 @@ setButtons() {
 
     const btn_call = new Button(this, config.centerX - 300, btn_fold.y, { 
         texture: assets.btn_yellow, scaleX: 0.8, scaleY: 0.8, text: 'Call', 
-        fontSize: '62px', sound: this.oSoundManager.check_sound 
+        fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         if (this.oButtons?.btn_call?.bAllInMode) {
             this.oSocketManager.emit(emitter.reqRaise, { nRaiseAmount: this.oGameManager.nMyPlayerChips });
@@ -299,7 +515,7 @@ setButtons() {
 
     const btn_check = new Button(this, btn_call.x, btn_call.y, { 
         texture: assets.btn_yellow, scaleX: 0.8, scaleY: 0.8, iconTexture: assets.check_icon, 
-        text: 'Check', fontSize: '62px', sound: this.oSoundManager.check_sound 
+        text: 'Check', fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         this.oSocketManager.emit(emitter.reqCheck);
     }).setVisible(false);
@@ -343,7 +559,7 @@ setButtons() {
     // FIXED: MIN button
     const btn_min = new Button(this, btn_fold.x, btn_fold.y, { 
         texture: assets.btn_green, scaleX: 0.8, scaleY: 0.8, text: 'MIN', 
-        fontSize: '62px', sound: this.oSoundManager.check_sound 
+        fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         const minRaise = this.oGameManager.nMinRaiseAmount;
         this.oGameManager.tempRaiseAmount = minRaise;
@@ -359,7 +575,7 @@ setButtons() {
     // FIXED: Half pot button
     const btn_halfPot = new Button(this, btn_call.x - 10 - btn_call.btn_image.displayWidth / 4, btn_call.y, { 
         texture: assets.btn_smallYellow, scaleX: 0.8, scaleY: 0.8, text: '1/2 Pot', 
-        fontSize: '62px', sound: this.oSoundManager.raise_sound 
+        fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         const halfPot = this.oGameManager.nPotAmount / 2;
         const minRaise = this.oGameManager.nMinRaiseAmount;
@@ -380,7 +596,7 @@ setButtons() {
     // FIXED: Full pot button
     const btn_fullPot = new Button(this, btn_call.x - 10 + btn_call.btn_image.displayWidth / 4, btn_call.y, { 
         texture: assets.btn_smallOrange, scaleX: 0.8, scaleY: 0.8, text: 'Pot', 
-        fontSize: '62px', sound: this.oSoundManager.raise_sound 
+        fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         const potAmount = Number(this.oGameManager.nPotAmount) || 0;
         const myChips = Number(this.oGameManager.nMyPlayerChips) || 0;
@@ -397,7 +613,7 @@ setButtons() {
 
     const btn_allIn = new Button(this, btn_raise.x, btn_raise.y, { 
         texture: assets.btn_blue, scaleX: 0.8, scaleY: 0.8, iconTexture: assets.allIn_icon, 
-        text: 'All In', fontSize: '62px', sound: this.oSoundManager.raise_sound 
+        text: 'All In', fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         this.oSocketManager.emit(emitter.reqRaise, { nRaiseAmount: this.oGameManager.nMyPlayerChips });
     }).setVisible(false);
@@ -405,7 +621,7 @@ setButtons() {
 
     const btn_allInCommon = new Button(this, btn_raise.x, btn_raise.y, { 
         texture: assets.btn_blue, scaleX: 0.8, scaleY: 0.8, iconTexture: assets.allIn_icon, 
-        text: 'All In', fontSize: '62px', sound: this.oSoundManager.raise_sound 
+        text: 'All In', fontSize: '62px', sound: this.oSoundManager.click_sound 
     }, () => {
         this.oSocketManager.emit(emitter.reqRaise, { nRaiseAmount: this.oGameManager.nMyPlayerChips });
     }).setVisible(false);
@@ -589,6 +805,10 @@ setButtons() {
         // Beginners: treat editorCreate() as “base layout created here”.
 
         this.editorCreate();
+        this.registerFXOverlayPotAnchor();
+        this.scale.on('resize', this.registerFXOverlayPotAnchor, this);
+        window.FXOverlay?.setSoundEnabled?.(false);
+        window.FXOverlay?.setMusicEnabled?.(false);
         // [PROFILE SETTINGS] Pulls player settings from your API (sound/music toggles).
         // Safe edits:
         // - you can change what happens after profile loads (e.g., default sound on/off)
@@ -597,12 +817,19 @@ setButtons() {
 
         this.oServices.profile().then(res => {
             const data = res.data.data;
-            this.oSoundManager.isSoundOn = data.bSoundEnabled;
-            this.oSoundManager.isMusicOn = data.bMusicEnabled;
+            this.oSoundManager.setSoundEnabled(data.bSoundEnabled);
+            this.oSoundManager.setMusicEnabled(data.bMusicEnabled);
             this.settings.updateSoundSwitcher(this.oSoundManager.isSoundOn);
             this.settings.updateMusicSwitcher(this.oSoundManager.isMusicOn);
-        }).catch(err => console.error('err', err));
-        this.oSoundManager.playMusic(this.oSoundManager.bg_music, true);
+            if (this.oSoundManager.isMusicOn) {
+                this.oSoundManager.playMusic(this.oSoundManager.bg_music, true);
+            }
+        }).catch(err => {
+            console.error('err', err);
+            if (this.oSoundManager.isMusicOn) {
+                this.oSoundManager.playMusic(this.oSoundManager.bg_music, true);
+            }
+        });
         this.visibilityChangeHandler = () => {
             if (document.visibilityState === 'hidden') this.exitGame();
         };
@@ -750,14 +977,22 @@ setButtons() {
         const startX = this.oPotAmount.pot_amount_base.x - totalWidth / 2;
         this.oPotAmount.chip_icon.setX(startX);
         this.oPotAmount.pot_amount_text.setX(startX + this.oPotAmount.chip_icon.displayWidth + this.oPotAmount.pot_amount_text.displayWidth / 2);
+        this.callFXOverlay('setPotAmount', nTableChips);
     }
     handleDoubleDown(oData, sEventName) {
         const player = this.players.get(oData.iUserId);
+        const potIncrease = Math.max(0, Number(oData.nTableChips || 0) - Number(this.oGameManager.nPotAmount || 0));
 
         const playerNewCards = [];
+        this.oSoundManager.playSound(this.oSoundManager.doubleDown_sound, false);
         player?.playerProfile?.setAmountIn(oData.nChips);
         if (oData.iUserId !== this.iUserId && sEventName === 'resDoubledown') {
             player?.playerProfile?.setBettingLabel('DD', oData.nLastBidChips);
+        }
+        if (potIncrease > 0) {
+            Number(oData.nChips) === 0
+                ? this.playPlayerBetFX(player?.playerProfile, 'allIn', potIncrease, { audioAction: null })
+                : this.playPlayerBetFX(player?.playerProfile, 'bigBet', potIncrease, { audioAction: null });
         }
         player.iUserId == this.iUserId && this.setAmountIn(oData.nChips);
         player.iUserId == this.iUserId && player?.playerProfile?.setScore(oData.nCardScore);
@@ -780,9 +1015,25 @@ setButtons() {
     handlePlayerBet(oData, sEventName) {
         const player = this.players.get(oData.iUserId);
         if (!player) return;
+        const potIncrease = Math.max(0, Number(oData.nTableChips || 0) - Number(this.oGameManager.nPotAmount || 0));
+        const isAllInAction = (sEventName === 'resRaise' || sEventName === 'resCall') && Number(oData.nChips) === 0;
 
         player?.playerProfile?.setAmountIn(oData.nChips);
         player?.iUserId == this.iUserId && this.setMyPlayerData(oData);
+        if (potIncrease > 0) {
+            if (isAllInAction) {
+                this.oSoundManager.playSound(this.oSoundManager.chipsIn_sound, false);
+                this.playPlayerBetFX(player?.playerProfile, 'allIn', potIncrease, { audioAction: null });
+            } else if (sEventName === 'resRaise') {
+                this.oSoundManager.playSound(this.oSoundManager.chipsIn_sound, false);
+                this.playPlayerBetFX(player?.playerProfile, 'bigBet', potIncrease, { audioAction: null });
+            } else if (sEventName === 'resCall') {
+                this.oSoundManager.playSound(this.oSoundManager.chipsIn_sound, false);
+                this.playPlayerBetFX(player?.playerProfile, 'smallBet', potIncrease, { audioAction: null });
+            }
+        } else if (sEventName === 'resCheck') {
+            this.oSoundManager.playSound(this.oSoundManager.check_sound, false);
+        }
         this.updatePotAmount(oData.nTableChips);
 
         if (oData.iUserId == this.iUserId) return;
@@ -813,9 +1064,11 @@ setButtons() {
             player?.playerProfile?.setBettingLabel('Check');
         }
     }
-    setFoldPlayer(iUserId, eState, sReason, bShowMessage) {
+    setFoldPlayer(iUserId, eState, sReason, bShowMessage, options = {}) {
+        const playAudio = options.playAudio !== false;
         const player = this.players.get(iUserId);
         if (eState === 'fold') {
+            playAudio && this.oSoundManager.playSound(this.oSoundManager.fold_sound, false);
             player?.playerProfile.setAlpha(0.7);
             player?.playerProfile.setVisible(true);
             iUserId !== this.iUserId && player?.playerProfile.setBettingLabel('Fold');
@@ -837,6 +1090,7 @@ setButtons() {
             }
             this.players.delete(iUserId);
         } else if (eState === 'bust') {
+            playAudio && this.oSoundManager.playSound(this.oSoundManager.bust_sound, false);
             player?.playerProfile.showBustPrompt();
             // player?.playerProfile.setAlpha(0.7);
             player?.playerProfile.setVisible(true);
@@ -932,7 +1186,7 @@ setButtons() {
         aCardHand?.forEach(cardData => {
             this.createCard(cardData, player);
         });
-        this.setFoldPlayer(iUserId, eState);
+        this.setFoldPlayer(iUserId, eState, undefined, undefined, { playAudio: false });
         if (iUserId === this.iUserId) {
             this.setAmountIn(nChips);
             this.oGameManager.nMyPlayerChips = nChips;
@@ -973,7 +1227,9 @@ setButtons() {
             player?.playerProfile?.setAmountIn(participant.nChips);
             player?.iUserId == this.iUserId && this.setMyPlayerData(participant);
         });
-        // this.oSoundManager.playSound(this.oSoundManager.coin_sound, false);
+        if (Number(nTableChips) > Number(this.oGameManager.nPotAmount || 0)) {
+            this.oSoundManager.playSound(this.oSoundManager.chipsIn_sound, false);
+        }
         this.updatePotAmount(nTableChips);
     }
     setAmountIn(nAmountIn) {
@@ -985,6 +1241,7 @@ setButtons() {
     }
     async resetTurnTimer() {
         if (this.iLastTurnId === this.iUserId) this.hideAllButtons();
+        this.clearFXOverlayFocus();
         if (!this.iLastTurnId) return;
         const player = await this.players.get(this.iLastTurnId);
         player?.playerProfile?.resetTurnTimer();
@@ -1000,6 +1257,7 @@ setButtons() {
                 // player.setAmountIn(0);
             });
             this.updatePotAmount(nTableChips);
+            this.clearFXOverlayFocus();
             nRemainingInitializeTime > 0 && this.waitingForGameStart({ nInitializeTimer: Math.round(nRemainingInitializeTime) });
             nRemainingRoundStartsIn > 0 && this.waitingForNextRoundStart(Math.round(nRemainingRoundStartsIn / 1000));
             return;
@@ -1008,6 +1266,7 @@ setButtons() {
         const player = await this.players.get(iUserId);
         this.iLastTurnId = iUserId;
         this.oGameManager.nMinRaiseAmount = nMinBet;
+        this.focusFXOverlayPlayer(player?.playerProfile);
         player?.playerProfile?.resTurnTimer({ ttl, nTotalTurnTime, nGraceTime, eTurnType, initialValue, iUserId });
         if (player?.iUserId === this.iUserId) this.showAllButtons(aUserAction, nMinBet, toCallAmount);
         else this.hideAllButtons();
@@ -1154,28 +1413,14 @@ setDeclareResult({ nRoundStartsIn, aParticipant, bAllPlayerBust, bAllPlayersBust
       setTimeout(() => {
         player?.playerProfile?.showWinnerPrompt();
         participant.iUserId == this.iUserId && this.oSoundManager.playSound(this.oSoundManager.winAnimation_sound, false);
+        participant.nCardScore === 21 && this.callFXOverlay('blackjack');
       }, 3000);
       this.oGameManager.aWinnerPlayers.push(participant.iUserId);
       
       setTimeout(() => {
         player?.playerProfile?.hideWinnerPrompt();
         participant.iUserId == this.iUserId && this.oSoundManager.playSound(this.oSoundManager.winCoin_sound, false);
-        for (let i = 0; i < 5; i++) {
-          const chip = this.add.image(this.oPotAmount.chip_icon.x, this.oPotAmount.chip_icon.y, assets.chip_icon);
-          this.oAnimations.move({
-            aGameObjects: [chip], 
-            targetX: player?.playerProfile?.x, 
-            targetY: player?.playerProfile?.y, 
-            duration: 1000, 
-            delay: i * 100, 
-            ease: 'Quint.easeInOut', 
-            yoyo: false, 
-            repeat: 0, 
-            onComplete: () => {
-              chip.destroy();
-            }
-          });
-        }
+        this.playWinPotFX(player?.playerProfile, participant.nWinningAmount || 0);
       }, 5000);
     }
   });
@@ -1230,6 +1475,9 @@ setDeclareResult({ nRoundStartsIn, aParticipant, bAllPlayerBust, bAllPlayersBust
         this.timer && clearInterval(this.timer);
         this.declreResultInterval && clearInterval(this.declreResultInterval);
         this.tostTimeOut && clearTimeout(this.tostTimeOut);
+        this.oSoundManager.stopAllManagedSounds();
+        this.scale?.off?.('resize', this.registerFXOverlayPotAnchor, this);
+        this.clearFXOverlayPotAnchor();
         if (this.visibilityChangeHandler) window.removeEventListener('visibilitychange', this.visibilityChangeHandler);
         if (this.popStateHandler) window.removeEventListener('popstate', this.popStateHandler);
         this.oSocketManager?.destroy?.();
