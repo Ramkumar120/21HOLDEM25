@@ -11,7 +11,7 @@ const User = new mongoose.Schema(
     sPassword: { type: String },
     eUserType: {
       type: String,
-      enum: ['user', 'admin', 'bot'],
+      enum: ['user', 'admin', 'bot', 'guest'],
       default: 'user',
     },
     sAvatar: { type: String, default: '' },

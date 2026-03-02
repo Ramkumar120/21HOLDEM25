@@ -460,20 +460,27 @@ controllers.guestLogin = async (req, res) => {
     const body = _.pick(req.body, ['sDeviceId', 'sPushToken']);
 
     if (!body.sDeviceId) return res.reply(messages.required_field('Device Id'));
-    const user = await User.findOne({ sDeviceId: body.sDeviceId }).lean();
+    const user = await User.findOne({ sDeviceId: body.sDeviceId, eUserType: 'guest' });
 
     let newUser;
     if (!user) {
       let createUser = fakeUser.getRandomPlayer();
+      const uniqueSuffix = `${Date.now()}${_.randomBetween(100, 999)}`;
+      createUser.sUserName = `guest_${createUser.sUserName}_${uniqueSuffix}`;
       createUser.sDeviceId = body.sDeviceId;
       createUser.sPushToken = body.sPushToken;
+      createUser.eUserType = 'guest';
+      createUser.isEmailVerified = false;
+      createUser.nChips = 0;
       newUser = await User.create(createUser);
-      newUser.sToken = _.encodeToken({ _id: newUser._id });
-      newUser.eUserType = 'user';
+      newUser.sToken = _.encodeToken({ _id: newUser._id, eUserType: newUser.eUserType });
       await newUser.save();
       newUser = { sToken: newUser.sToken };
+    } else if (!user.sToken) {
+      user.sToken = _.encodeToken({ _id: user._id, eUserType: user.eUserType });
+      await user.save();
     }
-    req.user = !user ? newUser : user;
+    req.user = !user ? newUser : user.toObject ? user.toObject() : user;
 
     return res.reply(messages.success(), req.user, { authorization: req.user.sToken });
   } catch (error) {

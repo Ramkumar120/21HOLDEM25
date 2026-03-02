@@ -1,9 +1,10 @@
 const { default: mongoose } = require('mongoose');
 const boardManager = require('../../../../game/boardManager');
-const { PokerBoard, User } = require('../../../../models');
-const { BoardProtoType } = require('../../../../models');
+const { PokerBoard, User, BoardProtoType } = require('../../../../models');
+const { fakeUser } = require('../../../../utils');
 
 const middleware = {};
+const GUEST_BOT_COUNT = 8;
 
 middleware.getPrototype = async (req, res, next) => {
   try {
@@ -97,6 +98,24 @@ middleware.joiningProcess = async (req, res, next) => {
   }
 };
 
+middleware.getGuestPrototype = async (req, res, next) => {
+  try {
+    const { iProtoId } = _.pick(req.body, ['iProtoId']);
+    let boardProtoType;
+    if (iProtoId) {
+      boardProtoType = await BoardProtoType.findOne({ _id: iProtoId }).lean();
+    } else {
+      boardProtoType = await BoardProtoType.findOne({ eStatus: 'y' }).sort({ nMinBet: 1 }).lean();
+    }
+    if (!boardProtoType || boardProtoType.eStatus != 'y') return res.reply(messages.custom.table_not_found);
+
+    req.boardProto = boardProtoType;
+    next();
+  } catch (error) {
+    res.reply(messages.server_error(), error.toString());
+  }
+};
+
 middleware.createPrivateBoard = async (req, res, next) => {
   if (req.user.aPokerBoard.length) return res.reply(messages.custom.max_board_join_limit);
 
@@ -142,6 +161,86 @@ middleware.joinPrivateBoard = async (req, res, next) => {
     log.red(error.toString());
     return res.reply(messages.server_error(), error.toString());
   }
+};
+
+middleware.joinGuestBoard = async (req, res, next) => {
+  try {
+    if (req.user.aPokerBoard.length) {
+      const activeBoardId = req.user.aPokerBoard[0].toString();
+      const activeBoard = await boardManager.getBoard(activeBoardId);
+      const participant = activeBoard?.getParticipant?.(req.user._id.toString());
+      if (!activeBoard || !participant) {
+        await User.updateOne({ _id: req.user._id }, { $pull: { aPokerBoard: activeBoardId } });
+        await PokerBoard.updateMany({ iBoardId: activeBoardId }, { $pull: { aParticipants: req.user._id } });
+        req.user.aPokerBoard = [];
+      } else if (activeBoard.eTableMode === 'guest') {
+        req.board = activeBoard;
+        req.existingGuestParticipant = participant;
+        req.shouldSeedGuestBots = false;
+        return next();
+      } else {
+        return res.reply(messages.custom.max_board_join_limit);
+      }
+    }
+
+    const candidateBoards = await PokerBoard.find({ iProtoId: req.boardProto._id, eTableMode: 'guest' }).sort({ dUpdatedDate: -1 }).lean();
+    for (const pokerBoard of candidateBoards) {
+      const board = await boardManager.getBoard(pokerBoard.iBoardId.toString());
+      if (!board) {
+        await Promise.all([
+          PokerBoard.deleteOne({ iBoardId: pokerBoard.iBoardId }),
+          User.updateMany({ aPokerBoard: pokerBoard.iBoardId }, { $pull: { aPokerBoard: pokerBoard.iBoardId } }),
+        ]);
+        continue;
+      }
+
+      const hasGuestPlayer = board.aParticipant.some(participant => participant.eUserType !== 'bot');
+      if (hasGuestPlayer || board.aParticipant.length >= board.nMaxPlayer) continue;
+
+      await PokerBoard.updateOne({ iBoardId: board._id }, { $addToSet: { aParticipants: req.user._id } });
+      req.board = board;
+      req.shouldSeedGuestBots = false;
+      return next();
+    }
+
+    req.board = await boardManager.createBoard(req.boardProto, { eTableMode: 'guest' });
+    await new PokerBoard({
+      iBoardId: req.board._id,
+      iProtoId: req.boardProto._id,
+      aParticipants: [req.user._id],
+      eTableMode: 'guest',
+    }).save();
+    req.shouldSeedGuestBots = true;
+    req.guestBotCount = Math.min(GUEST_BOT_COUNT, Math.max(Number(req.boardProto.nMaxPlayer || 0) - 1, 0));
+    next();
+  } catch (error) {
+    log.red(error.toString());
+    return res.reply(messages.server_error(), error.toString());
+  }
+};
+
+middleware.createGuestBotUsers = async (count, minBuyIn) => {
+  const bots = [];
+  for (let i = 0; i < count; i += 1) {
+    let createdBot = null;
+    for (let attempt = 0; attempt < 10 && !createdBot; attempt += 1) {
+      const botSeed = fakeUser.getRandomPlayer();
+      const uniqueSuffix = `${Date.now()}${i}${attempt}${_.randomBetween(100, 999)}`;
+      botSeed.sUserName = `demo_${botSeed.sUserName}_${uniqueSuffix}`;
+      botSeed.sDeviceId = `demo-bot-${uniqueSuffix}`;
+      botSeed.eUserType = 'bot';
+      botSeed.isEmailVerified = true;
+      botSeed.nChips = Math.max(Number(botSeed.nChips) || 0, Number(minBuyIn) || 0);
+      try {
+        createdBot = await User.create(botSeed);
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+      }
+    }
+    if (!createdBot) throw new Error('Unable to create guest bot user');
+    bots.push(createdBot);
+  }
+  return bots;
 };
 
 module.exports = middleware;

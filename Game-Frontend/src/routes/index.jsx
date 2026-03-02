@@ -34,9 +34,9 @@ function AllRoutes() {
             {/* <Toaster limit={5} /> */}
             <BrowserRouter>
                 <Routes>
-                    {Router?.map(({ isPrivateRoute, children, Component }) => {
+                    {Router?.map(({ isPrivateRoute, children, Component }, index) => {
                         return (
-                            <Route key={isPrivateRoute ? 'private' : 'public'} element={<Component />}>
+                            <Route key={`${index}-${isPrivateRoute ? 'private' : 'public'}`} element={<Component />}>
                                 {allPaths(children)}
                             </Route>
                         )

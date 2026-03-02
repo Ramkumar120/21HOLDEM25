@@ -1,6 +1,6 @@
 /* eslint-disable prefer-destructuring */
 /* eslint-disable no-continue */
-const { Transaction, Analytics, User } = require('../../../../models');
+const { Analytics, User } = require('../../../../models');
 const Service = require('./lib/Service');
 
 class Participant extends Service {
@@ -32,7 +32,7 @@ class Participant extends Service {
       }
 
       if (nCallAmount > 0) {
-        await Transaction.create({
+        await this.recordTransaction({
           iUserId: this.iUserId,
           iBoardId: this.oBoard._id,
           nAmount: nCallAmount,
@@ -124,7 +124,7 @@ class Participant extends Service {
         this.aUserAction = ['f'];
       }
 
-      await Transaction.create({
+      await this.recordTransaction({
         iUserId: this.iUserId,
         iBoardId: this.oBoard._id,
         nAmount: nTotalDebit,
@@ -203,7 +203,7 @@ class Participant extends Service {
       this.isAllInLock = true;
       this.aUserAction = ['f'];
 
-      await Transaction.create({
+      await this.recordTransaction({
         iUserId: this.iUserId,
         iBoardId: this.oBoard._id,
         nAmount: nAllInAmount,
@@ -267,7 +267,7 @@ class Participant extends Service {
       this.nLastBidChips = nDoubleDownAmount;
       this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nDoubleDownAmount;
 
-      await Transaction.create({
+      await this.recordTransaction({
         iUserId: this.iUserId,
         iBoardId: this.oBoard._id,
         nAmount: nDoubleDownAmount,
@@ -348,7 +348,7 @@ class Participant extends Service {
         this.nLastBidChips += nStandAmount;
         this.nTotalBidChips = (this.nTotalBidChips ?? 0) + nStandAmount;
 
-        await Transaction.create({
+        await this.recordTransaction({
           iUserId: this.iUserId,
           iBoardId: this.oBoard._id,
           nAmount: nStandAmount,
@@ -495,9 +495,48 @@ class Participant extends Service {
         toCallAmount: nToCallAmount,
       });
       this.oBoard.saveLogs([{ sAction: 'assignTurn', eLogType: 'game', iUserId: this.oBoard.iUserTurn }]);
+      if (this.isAutomatedPlayer()) {
+        await this.playAutomatedTurn({ toCallAmount: nToCallAmount });
+      }
     } catch (error) {
       console.log('takeTurn', error);
     }
+  }
+
+  getAutomatedRaiseAmount(toCallAmount = 0) {
+    const minRaiseAmount = Math.max(Number(this.oBoard.nMinBet) || 0, 1);
+    const maxRaiseAmount = Math.max(Number(this.oBoard.nMaxBet) || 0, minRaiseAmount);
+    const affordableRaise = Math.max(0, Math.floor((Number(this.nChips) || 0) - Math.max(Number(toCallAmount) || 0, 0)));
+    if (affordableRaise < minRaiseAmount) return null;
+    return Math.min(minRaiseAmount, maxRaiseAmount, affordableRaise);
+  }
+
+  async playAutomatedTurn({ toCallAmount = 0 } = {}) {
+    const noop = () => {};
+    await _.delay(_.randomBetween(450, 900));
+
+    if (this.oBoard.eState !== 'playing' || this.eState !== 'playing') return false;
+    if (!this.hasValidTurn()) return false;
+
+    const allowedActions = new Set(this.aUserAction);
+    const score = Number(this.nCardScore) || 0;
+    const callAmount = Math.max(Number(toCallAmount) || 0, 0);
+    const stack = Math.max(Number(this.nChips) || 0, 0);
+    const pressureRatio = callAmount > 0 ? callAmount / Math.max(stack, 1) : 0;
+    const raiseAmount = this.getAutomatedRaiseAmount(callAmount);
+
+    if (allowedActions.has('a') && pressureRatio >= 0.65) return await this.allInShortCall(noop);
+    if (allowedActions.has('d') && callAmount === 0 && score >= 9 && score <= 11 && stack >= this.oBoard.nMinBet * 2) return await this.doubleDown({}, noop);
+    if (allowedActions.has('s') && score >= 19) return await this.stand({}, noop);
+    if (allowedActions.has('ck') && score >= 17) return await this.check({}, noop);
+    if (allowedActions.has('r') && raiseAmount && callAmount === 0 && score >= 13 && score <= 17) {
+      return await this.raise({ nRaiseAmount: raiseAmount }, noop);
+    }
+    if (allowedActions.has('c') && (score <= 16 || pressureRatio <= 0.22)) return await this.call({}, noop);
+    if (allowedActions.has('ck')) return await this.check({}, noop);
+    if (allowedActions.has('s') && score >= 15) return await this.stand({}, noop);
+    if (allowedActions.has('f')) return await this.foldPlayer({ sReason: 'Bot fold', eBehaviour: 'fold' });
+    return false;
   }
 
   async passTurn() {

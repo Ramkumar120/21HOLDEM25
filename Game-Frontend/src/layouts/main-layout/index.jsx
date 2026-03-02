@@ -55,7 +55,7 @@ function MainLayout({ children }) {
     // }, [socket, getCookie('sAuthToken')])
 
     return (
-        <div className='main-layout'>
+        <div id={isGamePlay ? 'main-layout' : undefined} className={`main-layout ${isGamePlay ? 'gameplay-layout' : ''}`}>
             <div className='main-layout-background'></div>
             {!isGamePlay && <HeaderPrivate />}
             <div className={`main-container ${width ? !isOpen && 'active' : isOpen && 'active'}`}>

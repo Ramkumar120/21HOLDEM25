@@ -3,6 +3,9 @@ const controllers = require('./lib/controllers');
 const middleware = require('./lib/middlewares');
 const commonMiddleware = require('../../middleware');
 
+router.post('/guest/board/join', commonMiddleware.isGuestAuthenticated, middleware.getGuestPrototype, middleware.joinGuestBoard, controllers.joinGuestBoard);
+router.get('/guest/board/leave', commonMiddleware.isGuestAuthenticated, controllers.leaveBoard);
+
 router.use(commonMiddleware.isAuthenticated);
 
 router.get('/board/list', controllers.listBoard);

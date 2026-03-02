@@ -1,10 +1,11 @@
-const { User, PokerBoard, Analytics } = require('../../../../../models');
+const { User, PokerBoard, Analytics, Transaction } = require('../../../../../models');
 const { redis } = require('../../../../../utils');
 
 class Service {
   constructor(oParticipantData, oBoard) {
     this.iUserId = _.toString(oParticipantData.iUserId);
     this.sUserName = oParticipantData.sUserName;
+    this.eUserType = oParticipantData.eUserType ?? 'user';
     this.nSeat = oParticipantData.nSeat;
     this.aCardHand = oParticipantData.aCardHand ?? [];
     this.eState = oParticipantData.eState;
@@ -204,7 +205,29 @@ class Service {
   }
 
   async updateUser(updateQuery) {
+    if (!this.shouldPersistFinancialState()) return null;
     return await User.findOneAndUpdate({ _id: this.iUserId }, updateQuery, { new: true });
+  }
+
+  async recordTransaction(transactionData) {
+    if (!this.shouldPersistFinancialState()) return null;
+    return await Transaction.create(transactionData);
+  }
+
+  shouldPersistFinancialState() {
+    return this.oBoard?.isLiveTable?.() !== false;
+  }
+
+  isGuestUser() {
+    return this.eUserType === 'guest';
+  }
+
+  isBotUser() {
+    return this.eUserType === 'bot';
+  }
+
+  isAutomatedPlayer() {
+    return this.isBotUser() && this.oBoard?.isGuestTable?.() === true;
   }
 
   async emit(sEventName, oData) {
@@ -217,6 +240,7 @@ class Service {
       //
       'iUserId',
       'sUserName',
+      'eUserType',
       'nSeat',
       'nChips',
       'aCardHand',

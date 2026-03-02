@@ -39,7 +39,7 @@ class BoardManager {
     }
   }
 
-  async createBoard(oProtoData) {
+  async createBoard(oProtoData, options = {}) {
     try {
       const tableSettings = {
         ...this.oDefaultSetting,
@@ -57,6 +57,7 @@ class BoardManager {
         nMaxPlayer: oProtoData.nMaxPlayer,
         iUserTurn: '',
         eState: 'waiting',
+        eTableMode: options.eTableMode || oProtoData.eTableMode || 'live',
         ePokerType: oProtoData.ePokerType || 'pokerJack',
         oSocketId: {},
         aDeck: deck.getDeck(1),

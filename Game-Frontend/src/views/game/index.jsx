@@ -28,12 +28,12 @@ class Boot extends Phaser.Scene {
     }
 }
 function Game() {
-    const { sAuthToken, iBoardId, sPrivateCode } = useLocation()?.state || {};
+    const { sAuthToken, iBoardId, sPrivateCode, fallbackPath = '/lobby' } = useLocation()?.state || {};
     const navigate = useNavigate();
     const gameRef = useRef(null);
     useEffect(() => {
         if (!sAuthToken || !iBoardId) {
-            navigate('/lobby');
+            navigate(fallbackPath);
             return;
         }
         const gameConfig = {
@@ -42,7 +42,7 @@ function Game() {
             height: config.height,
             version: config.version,
             title: config.title,
-            parent: "main-layout",
+            parent: "game-stage",
             transparent: true,
             scale: {
                 mode: Phaser.Scale.FIT,
@@ -63,8 +63,8 @@ function Game() {
             game.destroy(true);
         };
 
-    }, [sAuthToken, iBoardId]);
-    return <div ref={gameRef} />;
+    }, [fallbackPath, iBoardId, navigate, sAuthToken]);
+    return <div id='game-stage' className='game-stage' ref={gameRef} />;
 }
 
 export default Game;

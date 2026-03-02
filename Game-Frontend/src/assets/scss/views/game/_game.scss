@@ -5,7 +5,7 @@ body {
     // overflow: hidden;
 }
 
-#main-layout canvas {
+#game-stage canvas {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -13,8 +13,44 @@ body {
     margin: 0 !important;
 }
 
-#main-layout {
-    max-height: calc(var(--vh, 1vh) * 100);
+.gameplay-layout {
+    min-height: calc(var(--vh, 1vh) * 100);
+    height: calc(var(--vh, 1vh) * 100);
+    overflow: hidden;
+}
+
+.gameplay-layout .main-container,
+.gameplay-layout .container-fluid {
+    width: 100%;
+    height: 100%;
+}
+
+.gameplay-layout .main-container,
+.gameplay-layout .container-fluid,
+#main-layout.gameplay-layout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gameplay-layout .container-fluid {
+    padding: 0;
+}
+
+#game-stage {
+    position: relative;
+    width: min(calc(100vw - 24px), calc((var(--vh, 1vh) * 100 - 24px) * 1.7777778));
+    aspect-ratio: 16 / 9;
+    max-width: 1920px;
+    max-height: calc(var(--vh, 1vh) * 100 - 24px);
+    margin: 0 auto;
+}
+
+@media (max-width: 1280px) {
+    #game-stage {
+        width: min(calc(100vw - 12px), calc((var(--vh, 1vh) * 100 - 12px) * 1.7777778));
+        max-height: calc(var(--vh, 1vh) * 100 - 12px);
+    }
 }
 
 :root {

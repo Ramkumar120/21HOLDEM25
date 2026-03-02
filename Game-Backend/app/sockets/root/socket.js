@@ -36,7 +36,7 @@ class Socket {
     };
     const user = await User.findOne(query, project);
     if (!user) return next(new Error(messages.unauthorized().message));
-    if (user.eUserType !== 'ubot' && !user.isEmailVerified) return next(new Error(messages.unauthorized('Socket middleware').message));
+    if (!['bot', 'guest'].includes(user.eUserType) && !user.isEmailVerified) return next(new Error(messages.unauthorized('Socket middleware').message));
     if (user.eStatus === 'n') return next(new Error(messages.blocked('Account').message));
     if (user.eStatus === 'd') return next(new Error(messages.deleted('Account').message));
     if (user.sToken !== authorization) return next(new Error(messages.unauthorized().message));

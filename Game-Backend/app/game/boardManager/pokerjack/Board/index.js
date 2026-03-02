@@ -47,7 +47,7 @@ class Board extends Service {
             participant.aUserAction = ['f'];
           }
 
-          await Transaction.create({
+          await participant.recordTransaction({
             iUserId: participant.iUserId,
             iBoardId: this._id,
             nAmount: betAmount,
@@ -225,18 +225,20 @@ class Board extends Service {
       // ------------------------------ Pot Distribution ------------------------------
       if (aWinner.length) {
         const aTransactionData = [];
-        const setting = await Setting.findOne({}, { _id: 0, nRakeAmount: 1 }).lean();
+        const setting = this.isGuestTable() ? { nRakeAmount: 0 } : await Setting.findOne({}, { _id: 0, nRakeAmount: 1 }).lean();
         const adminRakeAmount = (this.nTableChips * setting.nRakeAmount) / 100;
-        aTransactionData.push({
-          iUserId: mongodb.mongify('5d3586d3e3cdfd095f9af778'),
-          iBoardId: this._id,
-          nAmount: adminRakeAmount,
-          eType: 'credit',
-          eMode: 'game',
-          eStatus: 'Success',
-          sDescription: 'adminRakeAmountCredit',
-          nGameRound: this.nGameRound,
-        });
+        if (!this.isGuestTable()) {
+          aTransactionData.push({
+            iUserId: mongodb.mongify('5d3586d3e3cdfd095f9af778'),
+            iBoardId: this._id,
+            nAmount: adminRakeAmount,
+            eType: 'credit',
+            eMode: 'game',
+            eStatus: 'Success',
+            sDescription: 'adminRakeAmountCredit',
+            nGameRound: this.nGameRound,
+          });
+        }
 
         const getContribution = participant => Math.max(Number(participant.nTotalBidChips) || 0, 0);
         const payoutByUserId = new Map();
@@ -347,7 +349,7 @@ class Board extends Service {
           });
         }
 
-        if (aTransactionData.length) await Transaction.insertMany(aTransactionData);
+        if (!this.isGuestTable() && aTransactionData.length) await Transaction.insertMany(aTransactionData);
         await this.saveLogs([
           {
             sAction: 'potDistribution',
@@ -415,6 +417,13 @@ class Board extends Service {
         if (participant.bNextTurnLeave) {
           participant.eState = 'leave';
         } else if (participant.nChips < proto.nMinBet * 2) {
+          if (this.isGuestTable()) {
+            participant.nChips = proto.nMinBuyIn;
+            participant.eState = 'waiting';
+            aAutoTopUp.push({ iUserId: participant.iUserId, nTopUpTo: proto.nMinBuyIn });
+            await this.update({ aParticipant: [participant.toJSON()] });
+            continue;
+          }
           const user = await User.findOne({ _id: participant.iUserId }, { _id: 0, nChips: 1 }).lean();
           const bCanAutoTopUp = user && Number(user.nChips) >= Number(proto.nMinBuyIn);
 

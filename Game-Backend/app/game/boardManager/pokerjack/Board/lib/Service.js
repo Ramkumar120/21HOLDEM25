@@ -7,6 +7,7 @@ class Service {
   constructor(oBoardData) {
     this._id = oBoardData._id;
     this.iProtoId = oBoardData.iProtoId;
+    this.eTableMode = oBoardData.eTableMode ?? 'live';
     this.aParticipant = oBoardData.aParticipant ? oBoardData.aParticipant.map(p => new Participant(p, this)) : [];
     this.aCommunityCard = oBoardData.aCommunityCard ?? []; // max five cards
     this.aDeck = oBoardData.aDeck ?? [];
@@ -84,6 +85,7 @@ class Service {
     try {
       this._id = oBoardData._id;
       this.iProtoId = oBoardData.iProtoId;
+      this.eTableMode = oBoardData.eTableMode ?? 'live';
       this.aParticipant = oBoardData.aParticipant ? oBoardData.aParticipant.map(p => new Participant(p, this)) : [];
       this.aCommunityCard = oBoardData.aCommunityCard ?? [];
       this.oSocketId = oBoardData.oSocketId;
@@ -307,6 +309,7 @@ class Service {
       const table = _.pick(this, [
         '_id',
         'iProtoId',
+        'eTableMode',
         'aCommunityCard',
         'aDeck',
         'oSocketId',
@@ -335,6 +338,14 @@ class Service {
     } catch (error) {
       console.log('toJSON', error);
     }
+  }
+
+  isGuestTable() {
+    return this.eTableMode === 'guest';
+  }
+
+  isLiveTable() {
+    return !this.isGuestTable();
   }
 }
 
