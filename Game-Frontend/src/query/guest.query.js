@@ -11,3 +11,11 @@ export async function joinGuestTable({ sAuthToken, iProtoId }) {
         },
     });
 }
+
+export async function joinGuestTutorialTable({ sAuthToken, iProtoId }) {
+    return await axios.post('/api/v1/poker/guest/tutorial/board/join', { iProtoId }, {
+        headers: {
+            Authorization: sAuthToken,
+        },
+    });
+}

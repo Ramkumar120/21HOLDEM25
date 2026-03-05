@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import chip_icon from '../../../../assets/images/gameplay/chip_icon.png'
 import btn_plus from '../../../../assets/images/buttons/btn_plus.png'
-import user_avatar from '../../../../assets/images/player-profile/avatar_2.png';
 import logo from '../../../../assets/images/splash/header_logo.png';
 import { getCookie, ReactToastify, removeCookie } from 'shared/utils';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
@@ -11,6 +10,7 @@ import _ from 'scripts/helper';
 import { Button, Form, Modal, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { joinLeaveTable, joinPrivateTable, joinTable } from 'query/gameTable.query';
 import { io } from 'socket.io-client';
+import { getAvatarImageSrc } from 'shared/constants/builtInAvatars';
 const HeaderPrivate = () => {
     const [playerData, setPlayerData] = useState(null);
     const [showUserMenu, setShowUserMenu] = useState(false);
@@ -122,7 +122,13 @@ const HeaderPrivate = () => {
                         </div>
                         <div className='header-private__menu-user' onClick={() => setShowUserMenu(!showUserMenu)}>
                             <div className='header-private__menu-user-avatar'>
-                                <img src={playerData?.sAvatar || user_avatar} alt='avatar' />
+                                <img
+                                    src={getAvatarImageSrc(playerData?.sAvatar, playerData?.sUserName)}
+                                    alt='avatar'
+                                    onError={(event) => {
+                                        event.currentTarget.src = getAvatarImageSrc('', playerData?.sUserName);
+                                    }}
+                                />
                             </div>
                             <div className='header-private__menu-user-name'>
                                 <span>{_.appendSuffix(playerData?.sUserName)}</span>

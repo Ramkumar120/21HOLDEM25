@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCircleCheck } from "@fortawesome/free-solid-svg-icons";
 import { ReactToastify } from "shared/utils";
+import { buildAvatarOptions, getAvatarImageSrc } from "shared/constants/builtInAvatars";
 
 const Profile = () => {
 
@@ -18,22 +19,17 @@ const Profile = () => {
     const { data: profileData, isLoading: isProfileDataLoading } = useQuery("getProfile", getProfile, {
         select: (data) => data?.data?.data,
         onSuccess: (response) => {
+            const selectedAvatar = getAvatarImageSrc(response?.sAvatar, response?.sUserName);
             reset({
                 sUserName: response?.sUserName,
-                sAvatar: response?.sAvatar,
+                sAvatar: selectedAvatar,
             })
-            handleAvatarList(response?.aAvatar?.aAvatar, response?.sAvatar)
+            handleAvatarList(response?.aAvatar?.aAvatar, selectedAvatar)
         },
     });
 
     const handleAvatarList = (aAvatarList, sAvatar) => {
-        setAvatarList(
-            aAvatarList?.map((item, index) => ({
-                id: index + 1,
-                selected: item === sAvatar,
-                sPath: item,
-            }))
-        )
+        setAvatarList(buildAvatarOptions(aAvatarList, sAvatar))
     }
 
     const handleAvatarSelect = (avatar) => {
@@ -79,6 +75,10 @@ const Profile = () => {
         isDirty && mutateProfileUpdate(payload);
     }
 
+    const sUserName = watch("sUserName");
+    const sAvatar = watch("sAvatar");
+    const previewAvatar = getAvatarImageSrc(sAvatar || profileData?.sAvatar, sUserName || profileData?.sUserName);
+
     return (
         <>
             <div className="profile">
@@ -93,9 +93,16 @@ const Profile = () => {
                                     <Row>
                                         <Col xl={4}>
                                             <div className="avatar">
-                                                <img src={profileData?.sAvatar} alt="avatar" draggable='false' />
+                                                <img
+                                                    src={previewAvatar}
+                                                    alt="avatar"
+                                                    draggable='false'
+                                                    onError={(event) => {
+                                                        event.currentTarget.src = getAvatarImageSrc("", sUserName || profileData?.sUserName);
+                                                    }}
+                                                />
                                             </div>
-                                            <div className="avatar-name">{watch('sUserName')}</div>
+                                            <div className="avatar-name">{sUserName}</div>
                                             <Form.Group>
                                                 <Form.Label>Username</Form.Label>
                                                 <Form.Control
@@ -132,13 +139,33 @@ const Profile = () => {
                                                 </div>
                                             </div>
 
+                                            <div className="avatar-picker-copy">
+                                                <div className="avatar-picker-title">Pick a player icon</div>
+                                                <div className="avatar-picker-text">
+                                                    Temporary built-in item avatars while custom profile art is still being finished.
+                                                </div>
+                                            </div>
                                             <div className="avatar-list">
-                                                {/* <div className="avatar-select-image selected"><FontAwesomeIcon icon={faCircleCheck} className="select-icon" /><img src={avatarImage} alt="" /></div> */}
                                                 {
                                                     avatarList?.map((avatar, index) => (
-                                                        <div key={index} className={`avatar-select-image ${avatar?.selected ? 'selected' : ''}`}>
-                                                            {avatar?.selected && <FontAwesomeIcon icon={faCircleCheck} className="select-icon" />}
-                                                            <img src={avatar?.sPath} alt="" draggable='false' onClick={() => handleAvatarSelect(avatar)} />
+                                                        <div
+                                                            key={index}
+                                                            className={`avatar-option ${avatar?.selected ? 'selected' : ''}`}
+                                                            onClick={() => handleAvatarSelect(avatar)}
+                                                            title={avatar?.label}
+                                                        >
+                                                            <div className="avatar-select-image">
+                                                                {avatar?.selected && <FontAwesomeIcon icon={faCircleCheck} className="select-icon" />}
+                                                                <img
+                                                                    src={avatar?.sPath}
+                                                                    alt={avatar?.label || "avatar option"}
+                                                                    draggable='false'
+                                                                    onError={(event) => {
+                                                                        event.currentTarget.src = getAvatarImageSrc("", avatar?.label || avatar?.id);
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div className="avatar-option-label">{avatar?.label}</div>
                                                         </div>
                                                     ))
                                                 }

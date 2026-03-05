@@ -5,6 +5,44 @@ const middleware = require('./middlewares');
 
 const controllers = {};
 
+async function seedGuestBots({ board, boardProto, count }) {
+  if (!count) return;
+
+  const bots = await middleware.createGuestBotUsers(count, boardProto.nMinBuyIn);
+  for (const bot of bots) {
+    await PokerBoard.updateOne({ iBoardId: board._id }, { $addToSet: { aParticipants: bot._id } });
+    await User.updateOne({ _id: bot._id }, { $addToSet: { aPokerBoard: board._id } });
+    await boardManager.addParticipant({
+      iBoardId: board._id,
+      oProtoData: boardProto,
+      oUserData: {
+        ...bot.toObject(),
+        nMinBuyIn: boardProto.nMinBuyIn,
+      },
+    });
+  }
+}
+
+async function ensureGuestBoardCanStart(board) {
+  const refreshedBoard = await boardManager.getBoard(board._id.toString());
+  if (!refreshedBoard) return board;
+
+  const nReadyParticipants = refreshedBoard.aParticipant.filter(participant => participant.eState !== 'leave').length;
+  if (nReadyParticipants < 3 || refreshedBoard.eState === 'playing') return refreshedBoard;
+
+  const [nRemainingInitializeTime, nRemainingResetTime] = await Promise.all([
+    refreshedBoard.getScheduler('initializeGame'),
+    refreshedBoard.getScheduler('resetTable'),
+  ]);
+
+  if (!nRemainingInitializeTime && !nRemainingResetTime) {
+    await refreshedBoard.deleteScheduler('refundOnLongWait', '');
+    await refreshedBoard.setSchedular('initializeGame', null, refreshedBoard.oSetting.nInitializeTimer);
+  }
+
+  return refreshedBoard;
+}
+
 controllers.listBoard = async (req, res) => {
   try {
     const query = { eStatus: 'y' };
@@ -68,10 +106,72 @@ controllers.leaveBoard = async (req, res) => {
   }
 };
 
+async function getActiveGuestBoard(req, res) {
+  if (!req.user?.aPokerBoard?.length) {
+    res.reply(messages.notFoundCM('Table has been Expired/ Completed!'));
+    return null;
+  }
+
+  const activeBoardId = req.user.aPokerBoard[0].toString();
+  const board = await boardManager.getBoard(activeBoardId);
+  const participant = board?.getParticipant?.(req.user._id.toString());
+
+  if (!board || !participant) {
+    await User.updateOne({ _id: req.user._id }, { $pull: { aPokerBoard: activeBoardId } });
+    await PokerBoard.updateMany({ iBoardId: activeBoardId }, { $pull: { aParticipants: req.user._id } });
+    res.reply(messages.notFoundCM('Table has been Expired/ Completed!'));
+    return null;
+  }
+
+  if (!board.isGuestTable?.()) {
+    res.reply(messages.unauthorized());
+    return null;
+  }
+
+  return { board, participant };
+}
+
+controllers.pauseGuestBoard = async (req, res) => {
+  try {
+    const oBoardContext = await getActiveGuestBoard(req, res);
+    if (!oBoardContext) return;
+
+    const { board } = oBoardContext;
+    const oGuestPause = await board.pauseGuestGame(req.user._id.toString());
+    return res.reply(messages.success(), {
+      bPaused: !!oGuestPause?.bActive,
+      oGuestPause,
+    });
+  } catch (error) {
+    return res.reply(messages.server_error('pauseGuestBoard'), error.toString());
+  }
+};
+
+controllers.resumeGuestBoard = async (req, res) => {
+  try {
+    const oBoardContext = await getActiveGuestBoard(req, res);
+    if (!oBoardContext) return;
+
+    const { board } = oBoardContext;
+    const oGuestPause = await board.resumeGuestGame(req.user._id.toString());
+    return res.reply(messages.success(), {
+      bPaused: !!oGuestPause?.bActive,
+      oGuestPause,
+    });
+  } catch (error) {
+    return res.reply(messages.server_error('resumeGuestBoard'), error.toString());
+  }
+};
+
 controllers.joinGuestBoard = async (req, res) => {
   try {
     if (!req.board) return res.reply(messages.custom.table_not_found);
     if (req.existingGuestParticipant) {
+      if (req.shouldSeedGuestBots) {
+        await seedGuestBots({ board: req.board, boardProto: req.boardProto, count: req.guestBotCount || 0 });
+      }
+      req.board = await ensureGuestBoardCanStart(req.board);
+      req.existingGuestParticipant = req.board.getParticipant(req.user._id.toString()) || req.existingGuestParticipant;
       return res.reply(messages.success(), {
         iBoardId: req.board._id,
         eState: req.board.eState,
@@ -95,20 +195,10 @@ controllers.joinGuestBoard = async (req, res) => {
     await User.updateOne({ _id: req.user._id }, { $addToSet: { aPokerBoard: req.board._id } });
 
     if (req.shouldSeedGuestBots) {
-      const bots = await middleware.createGuestBotUsers(req.guestBotCount || 0, req.boardProto.nMinBuyIn);
-      for (const bot of bots) {
-        await PokerBoard.updateOne({ iBoardId: req.board._id }, { $addToSet: { aParticipants: bot._id } });
-        await User.updateOne({ _id: bot._id }, { $addToSet: { aPokerBoard: req.board._id } });
-        await boardManager.addParticipant({
-          iBoardId: req.board._id,
-          oProtoData: req.boardProto,
-          oUserData: {
-            ...bot.toObject(),
-            nMinBuyIn: req.boardProto.nMinBuyIn,
-          },
-        });
-      }
+      await seedGuestBots({ board: req.board, boardProto: req.boardProto, count: req.guestBotCount || 0 });
     }
+
+    req.board = await ensureGuestBoardCanStart(req.board);
 
     return res.reply(messages.success(), response);
   } catch (error) {

@@ -129,6 +129,8 @@ callFXOverlay(effectName, ...args) {
     try {
         const overlay = this.getFXOverlay();
         if (!overlay) return false;
+        overlay.enable && overlay.enable();
+        this.registerFXOverlayPotAnchor();
         const effect = overlay[effectName];
         if (typeof effect !== 'function') return false;
         return effect.apply(overlay, args);
@@ -203,6 +205,44 @@ getFXOverlayScreenAnchor(gameObject, options = {}) {
     }
 }
 
+emitTutorialOverlay(detail = {}) {
+    if (!this.isGuestTutorial || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('guest-tutorial:update', { detail }));
+}
+
+getTutorialActionFromState() {
+    const nHandIndex = Number(this.oTutorialState?.nHandIndex);
+    const aTutorialActions = ['call', 'stand', 'doubleDown'];
+    return this.oTutorialState?.sExpectedAction || aTutorialActions[nHandIndex] || null;
+}
+
+getTutorialButtonTarget(actionKey) {
+    const oButtonMap = {
+        call: this.oButtons?.btn_call,
+        stand: this.oButtons?.btn_stand,
+        doubleDown: this.oButtons?.btn_doubleDown,
+        check: this.oButtons?.btn_check,
+        raise: this.oButtons?.btn_raise,
+    };
+    const button = oButtonMap[actionKey];
+    if (!button?.btn_image) return null;
+
+    return this.getFXOverlayScreenAnchor(button, {
+        width: button.btn_image.displayWidth * (button.scaleX || 1),
+        height: button.btn_image.displayHeight * (button.scaleY || 1),
+    });
+}
+
+syncTutorialState(oTutorial = this.oTutorialState, extraDetail = {}) {
+    if (!this.isGuestTutorial || !oTutorial) return;
+    this.oTutorialState = oTutorial;
+    this.emitTutorialOverlay({
+        type: 'tutorialState',
+        tutorial: oTutorial,
+        ...extraDetail,
+    });
+}
+
 getFXOverlayPlayerAnchor(playerProfile) {
     if (!playerProfile) return null;
 
@@ -258,12 +298,15 @@ playPlayerBetFX(playerProfile, effectName, amount, options = {}) {
     try {
         const overlay = this.getFXOverlay();
         if (!overlay || typeof overlay.setAnchor !== 'function') return false;
+        const nPotAmount = Number.isFinite(Number(options.potAmountOverride))
+            ? Number(options.potAmountOverride)
+            : this.oGameManager.nPotAmount + (Number(amount) || 0);
 
         overlay.setAnchor('betSource', () => this.getFXOverlayPlayerAnchor(playerProfile));
         const result = this.callFXOverlay(effectName, amount, {
             source: 'betSource',
             target: 'potPile',
-            potAmount: this.oGameManager.nPotAmount + (Number(amount) || 0),
+            potAmount: nPotAmount,
             audioAction: options.audioAction,
         });
         window.setTimeout(() => {
@@ -755,10 +798,11 @@ setButtons() {
             iBoardId: this.iBoardId,
         });
     }
-    init({ sAuthToken, iBoardId, sPrivateCode }) {
+    init({ sAuthToken, iBoardId, sPrivateCode, isGuestTutorial = false }) {
         this.sAuthToken = sAuthToken;
         this.iBoardId = iBoardId;
         this.sPrivateCode = sPrivateCode;
+        this.isGuestTutorial = Boolean(isGuestTutorial);
     }
 
     // ==============================================================
@@ -787,6 +831,7 @@ setButtons() {
         this.isMyTurn = false;
         this.isFinishGame = false;
         this.iSelecetdCardId = '';
+        this.oTutorialState = null;
 
         this.cards = [];
         this.selectedCards = [];
@@ -795,6 +840,7 @@ setButtons() {
         this.oSoundManager = new SoundManager(this);
         this.oAnimations = new Animations(this);
         this.makeSocketConnection();
+        this.emitTutorialOverlay({ type: 'sceneReady' });
         this.oServices = new Services({ sRoot: process.env.REACT_APP_API_ENDPOINT, authorization: this.sAuthToken });
 
         // [UI BUILD] editorCreate() is usually an auto-generated builder method.
@@ -807,8 +853,9 @@ setButtons() {
         this.editorCreate();
         this.registerFXOverlayPotAnchor();
         this.scale.on('resize', this.registerFXOverlayPotAnchor, this);
-        window.FXOverlay?.setSoundEnabled?.(false);
-        window.FXOverlay?.setMusicEnabled?.(false);
+        window.FXOverlay?.enable?.();
+        window.FXOverlay?.setSoundEnabled?.(this.oSoundManager.isSoundOn);
+        window.FXOverlay?.setMusicEnabled?.(this.oSoundManager.isMusicOn);
         // [PROFILE SETTINGS] Pulls player settings from your API (sound/music toggles).
         // Safe edits:
         // - you can change what happens after profile loads (e.g., default sound on/off)
@@ -819,6 +866,8 @@ setButtons() {
             const data = res.data.data;
             this.oSoundManager.setSoundEnabled(data.bSoundEnabled);
             this.oSoundManager.setMusicEnabled(data.bMusicEnabled);
+            window.FXOverlay?.setSoundEnabled?.(this.oSoundManager.isSoundOn);
+            window.FXOverlay?.setMusicEnabled?.(this.oSoundManager.isMusicOn);
             this.settings.updateSoundSwitcher(this.oSoundManager.isSoundOn);
             this.settings.updateMusicSwitcher(this.oSoundManager.isMusicOn);
             if (this.oSoundManager.isMusicOn) {
@@ -826,6 +875,8 @@ setButtons() {
             }
         }).catch(err => {
             console.error('err', err);
+            window.FXOverlay?.setSoundEnabled?.(this.oSoundManager.isSoundOn);
+            window.FXOverlay?.setMusicEnabled?.(this.oSoundManager.isMusicOn);
             if (this.oSoundManager.isMusicOn) {
                 this.oSoundManager.playMusic(this.oSoundManager.bg_music, true);
             }
@@ -950,11 +1001,12 @@ setButtons() {
             }
         }
     }
-    async setGameData({ _id, aCommunityCard, iBigBlindId, iDealerId, iSmallBlindId, nTableChips, nDeck, aWinningAmount, nMaxPlayer, eState, ePokerType, nMaxTableAmount, nMinBuyIn, nMaxBuyIn, nMinBet, nMaxBet, iUserTurn, nTurnTime, nGraceTime, nTableRound, aOpenDeck, oWildJoker, oSetting, aParticipant, oGameInfo }) {
+    async setGameData({ _id, aCommunityCard, iBigBlindId, iDealerId, iSmallBlindId, nTableChips, nDeck, aWinningAmount, nMaxPlayer, eState, ePokerType, nMaxTableAmount, nMinBuyIn, nMaxBuyIn, nMinBet, nMaxBet, iUserTurn, nTurnTime, nGraceTime, nTableRound, aOpenDeck, oWildJoker, oSetting, aParticipant, oGameInfo, oTutorial }) {
         try {
             this.oGameManager.oGameInfo = oGameInfo;
             this.oGameManager.nMaxPlayer = nMaxPlayer;
             this.oGameManager.oSetting = oSetting;
+            this.oTutorialState = oTutorial || null;
             this.iDealerId = iDealerId;
             this.iBigBlindId = iBigBlindId;
             this.iSmallBlindId = iSmallBlindId;
@@ -965,6 +1017,7 @@ setButtons() {
             this.setPlayersData(aParticipant);
             this.setCommunityCards(aCommunityCard);
             this.setDealerAndBlind();
+            this.syncTutorialState(this.oTutorialState);
             // eState === 'finished' && 
         } catch (error) {
             console.error("Error while setting game data:", error);
@@ -1011,6 +1064,13 @@ setButtons() {
         playerNewCards.forEach((cardData, index) => {
             this.animateCard(cardData, index, player, index);
         });
+        if (this.isGuestTutorial && oData.iUserId === this.iUserId) {
+            this.emitTutorialOverlay({
+                type: 'userAction',
+                tutorial: this.oTutorialState,
+                action: 'doubleDown',
+            });
+        }
     }
     handlePlayerBet(oData, sEventName) {
         const player = this.players.get(oData.iUserId);
@@ -1035,6 +1095,23 @@ setButtons() {
             this.oSoundManager.playSound(this.oSoundManager.check_sound, false);
         }
         this.updatePotAmount(oData.nTableChips);
+
+        if (this.isGuestTutorial && oData.iUserId === this.iUserId) {
+            const sActionMap = {
+                resCall: 'call',
+                resStand: 'stand',
+                resCheck: 'check',
+                resRaise: 'raise',
+            };
+            const sTutorialAction = sActionMap[sEventName];
+            if (sTutorialAction) {
+                this.emitTutorialOverlay({
+                    type: 'userAction',
+                    tutorial: this.oTutorialState,
+                    action: sTutorialAction,
+                });
+            }
+        }
 
         if (oData.iUserId == this.iUserId) return;
 
@@ -1199,8 +1276,9 @@ setButtons() {
             player?.playerProfile?.hideWaiting();
         }
     }
-    async setBoardState({ _id, aCommunityCard, iBigBlindId, iDealerId, iSmallBlindId, nTableFee, nTableChips, nDeck, aWinningAmount, nMaxPlayer, eState, ePokerType, nMaxTableAmount, nMinBuyIn, nMaxBuyIn, nMinBet, nMaxBet, iUserTurn, nTurnTime, nGraceTime, nTableRound, aOpenDeck, oWildJoker, oSetting, aParticipant }) {
+    async setBoardState({ _id, aCommunityCard, iBigBlindId, iDealerId, iSmallBlindId, nTableFee, nTableChips, nDeck, aWinningAmount, nMaxPlayer, eState, ePokerType, nMaxTableAmount, nMinBuyIn, nMaxBuyIn, nMinBet, nMaxBet, iUserTurn, nTurnTime, nGraceTime, nTableRound, aOpenDeck, oWildJoker, oSetting, aParticipant, oTutorial }) {
         try {
+            this.oTutorialState = oTutorial || this.oTutorialState;
             this.iDealerId = iDealerId;
             this.iBigBlindId = iBigBlindId;
             this.iSmallBlindId = iSmallBlindId;
@@ -1212,6 +1290,7 @@ setButtons() {
             await this.setPlayersData(aParticipant);
             this.isFinishGame = false;
             this.setDealerAndBlind();
+            this.syncTutorialState(this.oTutorialState);
         } catch (error) {
             console.error("Error while setting board state:", error);
         }
@@ -1221,11 +1300,23 @@ setButtons() {
             player?.playerProfile?.setBlind(player.iUserId);
         });
     }
-    setCollectBootAmount({ nTableChips, aParticipant }) {
+setCollectBootAmount({ nTableChips, aParticipant }) {
+        let nRunningPot = Number(this.oGameManager.nPotAmount || 0);
+        const nBigBlindAmount = Number(this.oGameManager?.oGameInfo?.nBigBlindAmount || 0);
         aParticipant.forEach(participant => {
             const player = this.players.get(participant.iUserId);
+            const nBlindAmount = Math.max(Number(participant.nLastBidChips) || 0, 0);
             player?.playerProfile?.setAmountIn(participant.nChips);
             player?.iUserId == this.iUserId && this.setMyPlayerData(participant);
+            if (player?.playerProfile && nBlindAmount > 0) {
+                nRunningPot += nBlindAmount;
+                this.playPlayerBetFX(
+                    player.playerProfile,
+                    nBlindAmount >= nBigBlindAmount ? 'bigBet' : 'smallBet',
+                    nBlindAmount,
+                    { audioAction: null, potAmountOverride: nRunningPot }
+                );
+            }
         });
         if (Number(nTableChips) > Number(this.oGameManager.nPotAmount || 0)) {
             this.oSoundManager.playSound(this.oSoundManager.chipsIn_sound, false);
@@ -1258,6 +1349,12 @@ setButtons() {
             });
             this.updatePotAmount(nTableChips);
             this.clearFXOverlayFocus();
+            if (this.isGuestTutorial) {
+                this.emitTutorialOverlay({
+                    type: 'waiting',
+                    tutorial: this.oTutorialState,
+                });
+            }
             nRemainingInitializeTime > 0 && this.waitingForGameStart({ nInitializeTimer: Math.round(nRemainingInitializeTime) });
             nRemainingRoundStartsIn > 0 && this.waitingForNextRoundStart(Math.round(nRemainingRoundStartsIn / 1000));
             return;
@@ -1267,9 +1364,22 @@ setButtons() {
         this.iLastTurnId = iUserId;
         this.oGameManager.nMinRaiseAmount = nMinBet;
         this.focusFXOverlayPlayer(player?.playerProfile);
-        player?.playerProfile?.resTurnTimer({ ttl, nTotalTurnTime, nGraceTime, eTurnType, initialValue, iUserId });
-        if (player?.iUserId === this.iUserId) this.showAllButtons(aUserAction, nMinBet, toCallAmount);
-        else this.hideAllButtons();
+        if (ttl != null && nTotalTurnTime != null) player?.playerProfile?.resTurnTimer({ ttl, nTotalTurnTime, nGraceTime, eTurnType, initialValue, iUserId });
+        else player?.playerProfile?.resetTurnTimer();
+        if (player?.iUserId === this.iUserId) {
+            this.showAllButtons(aUserAction, nMinBet, toCallAmount);
+            if (this.isGuestTutorial) {
+                const sExpectedAction = this.getTutorialActionFromState();
+                this.emitTutorialOverlay({
+                    type: 'playerTurn',
+                    tutorial: this.oTutorialState,
+                    aUserAction,
+                    nMinBet,
+                    toCallAmount,
+                    targetRect: this.getTutorialButtonTarget(sExpectedAction),
+                });
+            }
+        } else this.hideAllButtons();
     }
 showAllButtons(aUserAction, nMinBet, toCallAmount) {
     this.hideAllButtons();
@@ -1340,7 +1450,15 @@ showAllButtons(aUserAction, nMinBet, toCallAmount) {
     this.oButtons.btn_check.setVisible(false);
     this.oFooter.footer.setVisible(false);
 }
-setDeclareResult({ nRoundStartsIn, aParticipant, bAllPlayerBust, bAllPlayersBust, sReason }) {
+setDeclareResult({ nRoundStartsIn, aParticipant, bAllPlayerBust, bAllPlayersBust, sReason, oTutorial }) {
+  if (oTutorial) {
+    this.oTutorialState = oTutorial;
+    this.emitTutorialOverlay({
+      type: 'handResult',
+      tutorial: oTutorial,
+      nRoundStartsIn,
+    });
+  }
   let remainingTime = Math.round(nRoundStartsIn / 1000);
   clearInterval(this.declreInterval);
   if (this.declreResultInterval) {

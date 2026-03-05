@@ -44,6 +44,7 @@ class BoardManager {
       const tableSettings = {
         ...this.oDefaultSetting,
         nTurnTime: oProtoData.nTurnTime * 1000 || 20000,
+        ...(options.oSetting || {}),
       };
 
       const oBoardData = {
@@ -61,6 +62,7 @@ class BoardManager {
         ePokerType: oProtoData.ePokerType || 'pokerJack',
         oSocketId: {},
         aDeck: deck.getDeck(1),
+        oTutorial: options.oTutorial || null,
         oSetting: { ...tableSettings },
         oGameInfo: {
           nTableEntryFee: oProtoData.nMinBuyIn,

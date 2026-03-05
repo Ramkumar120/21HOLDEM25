@@ -5,7 +5,7 @@ import CommonLayout from 'layouts/common-layout'
 
 function GuestRoute() {
   const location = useLocation()
-  if (location.pathname === '/guest/game') return <Outlet />
+  if (location.pathname === '/guest/game' || location.pathname === '/guest/tutorial/game') return <Outlet />
 
   return (
     <CommonLayout>

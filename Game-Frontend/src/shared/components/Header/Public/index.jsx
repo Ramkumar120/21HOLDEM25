@@ -17,6 +17,7 @@ const HeaderPublic = () => {
                 <Nav className="ml-auto navbar-link-grp">
                     <Link to={'/login'} className={`nav-item ${currentPath === '/login' ? 'active' : ''}`}>HOME</Link>
                     <Link to={'/about-us'} className={`nav-item ${currentPath === '/about-us' ? 'active' : ''}`}>ABOUT US</Link>
+                    <Link to={'/guest'} className={`nav-item ${currentPath.startsWith('/guest') ? 'active' : ''}`}>GUEST MODE</Link>
                     <Link to={'/how-to-play'} className={`nav-item ${currentPath === '/how-to-play' ? 'active' : ''}`}>HOW TO PLAY</Link>
                     <Link to={'/contact'} className={`nav-item ${currentPath === '/contact' ? 'active' : ''}`}>CONTACT</Link>
                 </Nav>

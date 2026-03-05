@@ -104,6 +104,8 @@ class PlayerListener {
     try {
       log.green('## fold table called from user', this.iUserId);
       if (!participant.hasValidTurn()) return this.logError(messages.custom.wait_for_turn, callback);
+      const sTutorialError = participant.getTutorialActionError ? participant.getTutorialActionError('fold', oData) : null;
+      if (sTutorialError) return this.logError(sTutorialError, callback);
 
       if (!oData) oData = {};
       oData.sReason = 'Self Fold';

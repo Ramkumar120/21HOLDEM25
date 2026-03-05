@@ -32,6 +32,7 @@
       + '#' + ROOT_ID + ' .fxui-bug-send, #' + ROOT_ID + ' .fxui-bug-close { border: 0; border-radius: 999px; padding: 10px 14px; cursor: pointer; pointer-events: auto; }'
       + '#' + ROOT_ID + ' .fxui-bug-send { background: linear-gradient(180deg, #36c176, #1b8b54); color: #fff; font-weight: 700; }'
       + '#' + ROOT_ID + ' .fxui-bug-close { background: rgba(255,255,255,0.06); color: #fff; }'
+      + '#' + ROOT_ID + ' .fxui-bug-status { margin-top: 10px; min-height: 18px; font-size: 12px; line-height: 1.4; color: rgba(215,255,239,0.92); }'
       + '@media (max-width: 768px) { #' + ROOT_ID + ' .fxui-bug-panel { right: 10px; top: auto; bottom: 84px; width: calc(100vw - 20px); } }';
     global.document.head.appendChild(style);
     return true;
@@ -61,7 +62,8 @@
       + '<label class="fxui-bug-field"><span>Email</span><input class="fxui-bug-input" name="email" type="email" maxlength="128"></label>'
       + '<label class="fxui-bug-field"><span>Issue</span><textarea class="fxui-bug-textarea" name="issue"></textarea></label>'
       + '<label class="fxui-bug-check"><input name="contactOk" type="checkbox"> You may contact me for more information</label>'
-      + '<div class="fxui-bug-actions"><button type="button" class="fxui-bug-close">Close</button><button type="button" class="fxui-bug-send">Email Report</button></div>';
+      + '<div class="fxui-bug-actions"><button type="button" class="fxui-bug-close">Close</button><button type="button" class="fxui-bug-send">Submit</button></div>'
+      + '<div class="fxui-bug-status" aria-live="polite"></div>';
 
     root.appendChild(bugTab);
     root.appendChild(bugPanel);
@@ -96,14 +98,23 @@
       var email = panel.querySelector('[name="email"]').value || '';
       var issue = panel.querySelector('[name="issue"]').value || '';
       var contactOk = panel.querySelector('[name="contactOk"]').checked ? 'Yes' : 'No';
-      var subject = encodeURIComponent('21 Hold\'em Bug Report');
-      var body = encodeURIComponent(
-        'Player Name: ' + playerName + '\n'
-        + 'Email: ' + email + '\n'
-        + 'Contact OK: ' + contactOk + '\n\n'
-        + 'Issue:\n' + issue + '\n'
-      );
-      global.location.href = 'mailto:bigslickgames@gmail.com?subject=' + subject + '&body=' + body;
+      var status = panel.querySelector('.fxui-bug-status');
+      var trimmedEmail = String(email).trim();
+      var trimmedIssue = String(issue).trim();
+
+      if (!trimmedEmail || !trimmedIssue) {
+        if (status) status.textContent = 'Please add your email and a short issue description.';
+        return false;
+      }
+
+      if (status) {
+        status.textContent = 'Thanks for helping to improve 21 Hold\'em. I\'ve got your email and will look into your report.';
+      }
+
+      panel.querySelector('[name="playerName"]').value = playerName.trim();
+      panel.querySelector('[name="email"]').value = trimmedEmail;
+      panel.querySelector('[name="issue"]').value = '';
+      panel.querySelector('[name="contactOk"]').checked = contactOk === 'Yes';
       return true;
     } catch (_error) {
       return false;

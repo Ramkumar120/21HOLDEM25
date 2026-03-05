@@ -1,13 +1,79 @@
 /* eslint-disable no-continue */
 const { User } = require('../../../../../models');
-const { redis } = require('../../../../../utils');
+const { redis, deck } = require('../../../../../utils');
 const Participant = require('../../Participant');
+
+const TUTORIAL_TABLE_MODE = 'guest_tutorial';
+
+function getCardValue(nLabel) {
+  if (nLabel === 1) return 11;
+  if (nLabel >= 11) return 10;
+  return nLabel;
+}
+
+function createTutorialCard(nLabel, eSuit, _id) {
+  return {
+    _id,
+    nLabel,
+    nValue: getCardValue(nLabel),
+    eSuit,
+    isJoker: false,
+  };
+}
+
+const TUTORIAL_HANDS = [
+  {
+    sKey: 'hand1',
+    sExpectedAction: 'call',
+    sTitle: 'Hand 1',
+    sDescription: 'Match the opening bet with Call so you can see the hand flow safely.',
+    aDeckTail: [
+      createTutorialCard(10, 'd', 'tutorial-h1-botbb'),
+      createTutorialCard(6, 'c', 'tutorial-h1-botsb'),
+      createTutorialCard(9, 'h', 'tutorial-h1-guest'),
+    ],
+    oBotActions: {
+      bot_sb: 'fold',
+      bot_bb: 'fold',
+    },
+  },
+  {
+    sKey: 'hand2',
+    sExpectedAction: 'stand',
+    sTitle: 'Hand 2',
+    sDescription: 'Use Call/Stand to match the bet and freeze your total for the rest of the hand.',
+    aDeckTail: [
+      createTutorialCard(8, 's', 'tutorial-h2-botbb'),
+      createTutorialCard(7, 'd', 'tutorial-h2-botsb'),
+      createTutorialCard(10, 'c', 'tutorial-h2-guest'),
+    ],
+    oBotActions: {
+      bot_sb: 'fold',
+      bot_bb: 'fold',
+    },
+  },
+  {
+    sKey: 'hand3',
+    sExpectedAction: 'doubleDown',
+    sTitle: 'Hand 3',
+    sDescription: 'This hand is scripted to show Double Down. Take one last card and push for 21.',
+    aDeckTail: [
+      createTutorialCard(13, 'h', 'tutorial-h3-dd-card'),
+      createTutorialCard(9, 'c', 'tutorial-h3-botbb'),
+      createTutorialCard(6, 'd', 'tutorial-h3-botsb'),
+      createTutorialCard(1, 's', 'tutorial-h3-guest'),
+    ],
+    oBotActions: {},
+  },
+];
 
 class Service {
   constructor(oBoardData) {
     this._id = oBoardData._id;
     this.iProtoId = oBoardData.iProtoId;
     this.eTableMode = oBoardData.eTableMode ?? 'live';
+    this.oTutorial = oBoardData.oTutorial ?? null;
+    this.oGuestPause = oBoardData.oGuestPause ?? { bActive: false, aSchedulers: [] };
     this.aParticipant = oBoardData.aParticipant ? oBoardData.aParticipant.map(p => new Participant(p, this)) : [];
     this.aCommunityCard = oBoardData.aCommunityCard ?? []; // max five cards
     this.aDeck = oBoardData.aDeck ?? [];
@@ -40,6 +106,8 @@ class Service {
         return this.setSchedular('refundOnLongWait', '', this.oSetting.nMaxWaitingTime);
       }
 
+      if (this.isTutorialTable()) this.prepareTutorialHand();
+
       this.eState = 'playing';
       this.aParticipant = this.aParticipant.map(p => {
         p.eState = 'playing';
@@ -71,6 +139,8 @@ class Service {
         iSmallBlindId: this.iSmallBlindId,
         iBigBlindId: this.iBigBlindId,
         eState: this.eState,
+        aDeck: this.aDeck,
+        oTutorial: this.oTutorial,
         aParticipant: this.aParticipant,
       });
       this.emit('resBoardState', this.toJSON());
@@ -86,6 +156,8 @@ class Service {
       this._id = oBoardData._id;
       this.iProtoId = oBoardData.iProtoId;
       this.eTableMode = oBoardData.eTableMode ?? 'live';
+      this.oTutorial = oBoardData.oTutorial ?? null;
+      this.oGuestPause = oBoardData.oGuestPause ?? { bActive: false, aSchedulers: [] };
       this.aParticipant = oBoardData.aParticipant ? oBoardData.aParticipant.map(p => new Participant(p, this)) : [];
       this.aCommunityCard = oBoardData.aCommunityCard ?? [];
       this.oSocketId = oBoardData.oSocketId;
@@ -157,6 +229,7 @@ class Service {
       };
 
       const oParticipant = new Participant(_userData, this);
+      this.assignTutorialRole(oParticipant);
       this.aParticipant.push(oParticipant);
 
       log.red('In add participant ::');
@@ -206,6 +279,7 @@ class Service {
       const aBookedSeat = this.aParticipant.map(p => p.nSeat);
       const aEmptySeat = [];
       for (let i = 0; i < this.nMaxPlayer; i += 1) if (!aBookedSeat.includes(i)) aEmptySeat.push(i);
+      if (this.isTutorialTable()) return aEmptySeat[0];
       const randomSeatIndex = _.randomBetween(0, aEmptySeat.length - 1);
       return aEmptySeat[randomSeatIndex];
     } catch (error) {
@@ -304,12 +378,102 @@ class Service {
     }
   }
 
+  async pauseGuestGame(iUserId = '') {
+    try {
+      if (!this.isGuestTable()) return { bActive: false, aSchedulers: [] };
+      if (this.oGuestPause?.bActive) return this.oGuestPause;
+
+      const aSchedulersToPause = [
+        { sTaskName: 'assignTurnTimeout', iUserId: this.iUserTurn || '*' },
+        { sTaskName: 'initializeGame', iUserId: '' },
+        { sTaskName: 'resetTable', iUserId: '' },
+        { sTaskName: 'refundOnLongWait', iUserId: '' },
+      ];
+      const aPausedSchedulers = [];
+
+      for (const scheduler of aSchedulersToPause) {
+        const nRemainingMs = await this.getScheduler(scheduler.sTaskName, scheduler.iUserId || '*');
+        if (!nRemainingMs || nRemainingMs <= 0) continue;
+
+        await this.deleteScheduler(scheduler.sTaskName, scheduler.iUserId || '*');
+        aPausedSchedulers.push({
+          sTaskName: scheduler.sTaskName,
+          iUserId: scheduler.iUserId || '',
+          nRemainingMs,
+        });
+      }
+
+      this.oGuestPause = {
+        bActive: true,
+        iPausedByUserId: _.toString(iUserId),
+        dPausedAt: Date.now(),
+        aSchedulers: aPausedSchedulers,
+      };
+
+      await this.update({ oGuestPause: this.oGuestPause });
+      return this.oGuestPause;
+    } catch (error) {
+      console.log('pauseGuestGame', error);
+      return { bActive: false, aSchedulers: [] };
+    }
+  }
+
+  async resumeGuestGame(iUserId = '') {
+    try {
+      if (!this.isGuestTable()) return { bActive: false, aSchedulers: [] };
+      const oPreviousPause = this.oGuestPause || { bActive: false, aSchedulers: [] };
+      if (!oPreviousPause.bActive) return this.oGuestPause;
+
+      this.oGuestPause = {
+        bActive: false,
+        iPausedByUserId: '',
+        dPausedAt: 0,
+        aSchedulers: [],
+      };
+      await this.update({ oGuestPause: this.oGuestPause });
+
+      for (const scheduler of oPreviousPause.aSchedulers || []) {
+        if (!scheduler?.sTaskName || !scheduler?.nRemainingMs || scheduler.nRemainingMs <= 0) continue;
+        await this.setSchedular(scheduler.sTaskName, scheduler.iUserId || '', scheduler.nRemainingMs);
+      }
+
+      const participant = iUserId ? this.getParticipant(iUserId) : null;
+      if (!participant) return this.oGuestPause;
+
+      const [nRemainingInitializeTime, nRemainingRoundStartsIn, nMaxWaitingTime] = await Promise.all([
+        this.getScheduler('initializeGame'),
+        this.getScheduler('resetTable'),
+        this.getScheduler('refundOnLongWait'),
+      ]);
+
+      if (nRemainingInitializeTime > 0) {
+        await participant.emit('initializeGame', { nInitializeTimer: nRemainingInitializeTime });
+      } else if (nRemainingRoundStartsIn > 0) {
+        await participant.emit('initializeGame', { nRoundStartsIn: nRemainingRoundStartsIn });
+      } else if (nMaxWaitingTime > 0 && this.eState === 'waiting') {
+        await participant.emit('resRefundOnLongWait', {
+          message: 'Please wait for other players to join',
+          nMaxWaitingTime,
+        });
+      } else if (typeof participant.sendTurnInfo === 'function') {
+        await participant.sendTurnInfo();
+      }
+
+      return this.oGuestPause;
+    } catch (error) {
+      console.log('resumeGuestGame', error);
+      return { bActive: false, aSchedulers: [] };
+    }
+  }
+
   toJSON() {
     try {
       const table = _.pick(this, [
         '_id',
         'iProtoId',
         'eTableMode',
+        'oTutorial',
+        'oGuestPause',
         'aCommunityCard',
         'aDeck',
         'oSocketId',
@@ -341,11 +505,88 @@ class Service {
   }
 
   isGuestTable() {
-    return this.eTableMode === 'guest';
+    return this.eTableMode === 'guest' || this.isTutorialTable();
   }
 
   isLiveTable() {
     return !this.isGuestTable();
+  }
+
+  isTutorialTable() {
+    return this.eTableMode === TUTORIAL_TABLE_MODE;
+  }
+
+  getTutorialHands() {
+    return TUTORIAL_HANDS;
+  }
+
+  getTutorialHandConfig() {
+    if (!this.isTutorialTable()) return null;
+    const nHandIndex = Number(this.oTutorial?.nHandIndex) || 0;
+    return TUTORIAL_HANDS[nHandIndex] || TUTORIAL_HANDS[0];
+  }
+
+  getTutorialExpectedUserAction() {
+    return this.getTutorialHandConfig()?.sExpectedAction || null;
+  }
+
+  getTutorialGuestParticipant() {
+    return this.aParticipant.find(participant => participant.eUserType === 'guest') || null;
+  }
+
+  getTutorialBotParticipants() {
+    return this.aParticipant
+      .filter(participant => participant.eUserType === 'bot')
+      .sort((a, b) => Number(a.nSeat) - Number(b.nSeat));
+  }
+
+  assignTutorialRole(participant) {
+    if (!this.isTutorialTable() || !participant) return;
+    if (participant.eUserType === 'guest') {
+      participant.sTutorialRole = 'guest';
+      return;
+    }
+    if (participant.eUserType !== 'bot') return;
+
+    const aBotRoles = this.getTutorialBotParticipants().map(bot => bot.sTutorialRole).filter(Boolean);
+    participant.sTutorialRole = !aBotRoles.includes('bot_sb') ? 'bot_sb' : 'bot_bb';
+  }
+
+  buildTutorialDeck(oHandConfig) {
+    if (!oHandConfig) return this.aDeck;
+
+    const aScriptedIds = new Set(oHandConfig.aDeckTail.map(card => card._id));
+    const aFillerDeck = deck
+      .getDeck(1)
+      .filter(card => !aScriptedIds.has(card._id))
+      .slice(0, 24);
+
+    return [...aFillerDeck, ...oHandConfig.aDeckTail];
+  }
+
+  prepareTutorialHand() {
+    if (!this.isTutorialTable()) return;
+
+    const oGuest = this.getTutorialGuestParticipant();
+    const aBots = this.getTutorialBotParticipants();
+    const oHandConfig = this.getTutorialHandConfig();
+    if (!oGuest || aBots.length < 2 || !oHandConfig) return;
+
+    oGuest.sTutorialRole = 'guest';
+    aBots[0].sTutorialRole = 'bot_sb';
+    aBots[1].sTutorialRole = 'bot_bb';
+
+    this.iDealerId = aBots[1].iUserId;
+    this.aDeck = this.buildTutorialDeck(oHandConfig);
+    this.oTutorial = {
+      ...(this.oTutorial || {}),
+      nHandIndex: Number(this.oTutorial?.nHandIndex) || 0,
+      sCurrentHandKey: oHandConfig.sKey,
+      sTitle: oHandConfig.sTitle,
+      sDescription: oHandConfig.sDescription,
+      sExpectedAction: oHandConfig.sExpectedAction,
+      bCompleted: false,
+    };
   }
 }
 

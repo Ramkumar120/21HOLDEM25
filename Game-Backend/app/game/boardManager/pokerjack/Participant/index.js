@@ -6,6 +6,9 @@ const Service = require('./lib/Service');
 class Participant extends Service {
   async call(oData, callback) {
     try {
+      const sTutorialError = this.getTutorialActionError('call', oData);
+      if (sTutorialError) return callback({ error: sTutorialError });
+
       const bCallStand = oData?.bTakeCard === false;
       const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
       const nCallAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
@@ -89,6 +92,9 @@ class Participant extends Service {
 
   async raise(oData, callback) {
     try {
+      const sTutorialError = this.getTutorialActionError('raise', oData);
+      if (sTutorialError) return callback({ error: sTutorialError });
+
       if (this.isDoubleDownLock || this.isAllInLock) return callback({ error: 'Locked players cannot raise while standing/doubledown' });
 
       const bShortAllInCallMode = this.aUserAction.includes('a') && !this.aUserAction.includes('r') && !this.aUserAction.includes('c');
@@ -248,6 +254,9 @@ class Participant extends Service {
 
   async doubleDown(oData, callback) {
     try {
+      const sTutorialError = this.getTutorialActionError('doubleDown', oData);
+      if (sTutorialError) return callback({ error: sTutorialError });
+
       const nDoubleDownAmount = this.oBoard.nMinBet * 2;
       if (this.nChips < nDoubleDownAmount) {
         return callback({ error: "Oh no! You don't have enough chips to play here, Would you like to visit the store to top up your bankroll?" });
@@ -326,6 +335,9 @@ class Participant extends Service {
 
   async stand(oData, callback) {
     try {
+      const sTutorialError = this.getTutorialActionError('stand', oData);
+      if (sTutorialError) return callback({ error: sTutorialError });
+
       const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
       const nStandAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
       const bIsDefendingRaise = nStandAmount > 0;
@@ -425,6 +437,9 @@ class Participant extends Service {
 
   async check(oData, callback) {
     try {
+      const sTutorialError = this.getTutorialActionError('check', oData);
+      if (sTutorialError) return callback({ error: sTutorialError });
+
       // Player has acted on their current turn; prevent stale timeout fold on this turn.
       await this.oBoard.deleteScheduler('assignTurnTimeout', this.iUserId);
 
@@ -471,12 +486,13 @@ class Participant extends Service {
 
       this.oBoard.iUserTurn = this.iUserId;
       const { nTurnTime, nTurnBuffer } = this.oBoard.oSetting;
+      const bTutorialTurn = this.oBoard?.isTutorialTable?.() === true;
 
       this.nPlayerTurnCount += 1;
 
       const turnScheduler = await this.oBoard.getScheduler('assignTurnTimeout');
       if (turnScheduler) await this.oBoard.deleteScheduler('assignTurnTimeout');
-      await this.oBoard.setSchedular('assignTurnTimeout', this.iUserId, nTurnTime);
+      if (!bTutorialTurn) await this.oBoard.setSchedular('assignTurnTimeout', this.iUserId, nTurnTime);
 
       const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
       const nToCallAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
@@ -488,15 +504,16 @@ class Participant extends Service {
 
       this.oBoard.emit('resPlayerTurn', {
         iUserId: this.iUserId,
-        ttl: nTurnTime,
-        nTotalTurnTime: nTurnTime,
+        ttl: bTutorialTurn ? null : nTurnTime,
+        nTotalTurnTime: bTutorialTurn ? null : nTurnTime,
         aUserAction: this.aUserAction,
         nMinBet: this.oBoard.nMinBet,
         toCallAmount: nToCallAmount,
       });
       this.oBoard.saveLogs([{ sAction: 'assignTurn', eLogType: 'game', iUserId: this.oBoard.iUserTurn }]);
       if (this.isAutomatedPlayer()) {
-        await this.playAutomatedTurn({ toCallAmount: nToCallAmount });
+        if (this.oBoard?.isTutorialTable?.()) await this.playTutorialTurn({ toCallAmount: nToCallAmount });
+        else await this.playAutomatedTurn({ toCallAmount: nToCallAmount });
       }
     } catch (error) {
       console.log('takeTurn', error);
@@ -511,9 +528,16 @@ class Participant extends Service {
     return Math.min(minRaiseAmount, maxRaiseAmount, affordableRaise);
   }
 
+  async waitForGuestResume() {
+    while (this.oBoard?.oGuestPause?.bActive) {
+      await _.delay(160);
+    }
+  }
+
   async playAutomatedTurn({ toCallAmount = 0 } = {}) {
     const noop = () => {};
-    await _.delay(_.randomBetween(450, 900));
+    await _.delay(_.randomBetween(1150, 1900));
+    await this.waitForGuestResume();
 
     if (this.oBoard.eState !== 'playing' || this.eState !== 'playing') return false;
     if (!this.hasValidTurn()) return false;
@@ -537,6 +561,33 @@ class Participant extends Service {
     if (allowedActions.has('s') && score >= 15) return await this.stand({}, noop);
     if (allowedActions.has('f')) return await this.foldPlayer({ sReason: 'Bot fold', eBehaviour: 'fold' });
     return false;
+  }
+
+  async playTutorialTurn({ toCallAmount = 0 } = {}) {
+    const noop = () => {};
+    await _.delay(_.randomBetween(900, 1300));
+    await this.waitForGuestResume();
+
+    if (!this.oBoard?.isTutorialTable?.() || this.eState !== 'playing' || !this.hasValidTurn()) return false;
+
+    const oHandConfig = this.oBoard.getTutorialHandConfig?.();
+    const sAction = oHandConfig?.oBotActions?.[this.sTutorialRole];
+    if (!sAction) return false;
+
+    switch (sAction) {
+      case 'fold':
+        return await this.foldPlayer({ sReason: 'Tutorial bot fold', eBehaviour: 'fold' });
+      case 'check':
+        return await this.check({}, noop);
+      case 'call':
+        return await this.call({}, noop);
+      case 'stand':
+        return await this.stand({}, noop);
+      case 'doubleDown':
+        return await this.doubleDown({}, noop);
+      default:
+        return false;
+    }
   }
 
   async passTurn() {

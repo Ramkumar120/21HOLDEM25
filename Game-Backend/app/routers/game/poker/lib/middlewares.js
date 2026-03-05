@@ -1,10 +1,47 @@
 const { default: mongoose } = require('mongoose');
 const boardManager = require('../../../../game/boardManager');
 const { PokerBoard, User, BoardProtoType } = require('../../../../models');
-const { fakeUser } = require('../../../../utils');
+const { fakeUser, redis } = require('../../../../utils');
 
 const middleware = {};
-const GUEST_BOT_COUNT = 8;
+const GUEST_BOT_COUNT = 2;
+const GUEST_TUTORIAL_BOT_COUNT = 2;
+const GUEST_TUTORIAL_TABLE_MODE = 'guest_tutorial';
+const MAX_ACTIVE_GUEST_PLAYERS = 3;
+
+async function clearBoardMembership({ iBoardId, iUserId }) {
+  await User.updateOne({ _id: iUserId }, { $pull: { aPokerBoard: iBoardId } });
+  await PokerBoard.updateMany({ iBoardId }, { $pull: { aParticipants: iUserId } });
+}
+
+async function detachBoardParticipant(board, iUserId) {
+  const sUserId = _.toString(iUserId);
+  if (!board || !sUserId) return;
+
+  board.aParticipant = board.aParticipant.filter(participant => _.toString(participant.iUserId) !== sUserId);
+
+  if (board.oSocketId?.[sUserId]) {
+    delete board.oSocketId[sUserId];
+    await board.update({ oSocketId: board.oSocketId });
+  }
+
+  await Promise.all([
+    clearBoardMembership({ iBoardId: board._id, iUserId }),
+    redis.client.json.del(_.getBoardKey(board._id), `.aParticipant_${sUserId}`),
+    redis.client.json.del(_.getBoardKey(board._id), `.aParticipant-${sUserId}`),
+  ]);
+}
+
+function getTargetGuestBotCount({ boardProto, guestBotCountOverride, bTutorialMode }) {
+  if (bTutorialMode) return GUEST_TUTORIAL_BOT_COUNT;
+  return Math.min(guestBotCountOverride || GUEST_BOT_COUNT, Math.max(Number(boardProto?.nMaxPlayer || 0) - 1, 0));
+}
+
+function getMissingGuestBotCount({ board, boardProto, guestBotCountOverride, bTutorialMode }) {
+  const nTargetGuestBotCount = getTargetGuestBotCount({ boardProto, guestBotCountOverride, bTutorialMode });
+  const nCurrentGuestBotCount = board.aParticipant.filter(participant => participant.eUserType === 'bot' && participant.eState !== 'leave').length;
+  return Math.max(nTargetGuestBotCount - nCurrentGuestBotCount, 0);
+}
 
 middleware.getPrototype = async (req, res, next) => {
   try {
@@ -116,6 +153,19 @@ middleware.getGuestPrototype = async (req, res, next) => {
   }
 };
 
+middleware.enableGuestTutorialMode = (req, _res, next) => {
+  req.guestBoardMode = GUEST_TUTORIAL_TABLE_MODE;
+  req.guestBotCountOverride = GUEST_TUTORIAL_BOT_COUNT;
+  req.guestTutorialState = {
+    nHandIndex: 0,
+    bCompleted: false,
+  };
+  req.guestTutorialBoardSettings = {
+    nInitializeTimer: 1200,
+  };
+  next();
+};
+
 middleware.createPrivateBoard = async (req, res, next) => {
   if (req.user.aPokerBoard.length) return res.reply(messages.custom.max_board_join_limit);
 
@@ -165,25 +215,42 @@ middleware.joinPrivateBoard = async (req, res, next) => {
 
 middleware.joinGuestBoard = async (req, res, next) => {
   try {
+    const eTableMode = req.guestBoardMode || 'guest';
+    const bTutorialMode = eTableMode === GUEST_TUTORIAL_TABLE_MODE;
+    const getEligibleGuestSeatCount = board => board.aParticipant.filter(participant => participant.eState !== 'leave').length;
+
     if (req.user.aPokerBoard.length) {
       const activeBoardId = req.user.aPokerBoard[0].toString();
       const activeBoard = await boardManager.getBoard(activeBoardId);
       const participant = activeBoard?.getParticipant?.(req.user._id.toString());
       if (!activeBoard || !participant) {
-        await User.updateOne({ _id: req.user._id }, { $pull: { aPokerBoard: activeBoardId } });
-        await PokerBoard.updateMany({ iBoardId: activeBoardId }, { $pull: { aParticipants: req.user._id } });
+        await clearBoardMembership({ iBoardId: activeBoardId, iUserId: req.user._id });
         req.user.aPokerBoard = [];
-      } else if (activeBoard.eTableMode === 'guest') {
-        req.board = activeBoard;
-        req.existingGuestParticipant = participant;
-        req.shouldSeedGuestBots = false;
-        return next();
+      } else if (activeBoard.eTableMode === eTableMode) {
+        if (bTutorialMode && activeBoard?.oTutorial?.bCompleted) {
+          await clearBoardMembership({ iBoardId: activeBoardId, iUserId: req.user._id });
+          req.user.aPokerBoard = [];
+        } else if (!bTutorialMode && participant?.eState === 'spectator') {
+          await detachBoardParticipant(activeBoard, req.user._id);
+          req.user.aPokerBoard = [];
+        } else {
+          req.board = activeBoard;
+          req.existingGuestParticipant = participant;
+          req.guestBotCount = getMissingGuestBotCount({
+            board: activeBoard,
+            boardProto: req.boardProto,
+            guestBotCountOverride: req.guestBotCountOverride,
+            bTutorialMode,
+          });
+          req.shouldSeedGuestBots = req.guestBotCount > 0;
+          return next();
+        }
       } else {
         return res.reply(messages.custom.max_board_join_limit);
       }
     }
 
-    const candidateBoards = await PokerBoard.find({ iProtoId: req.boardProto._id, eTableMode: 'guest' }).sort({ dUpdatedDate: -1 }).lean();
+    const candidateBoards = await PokerBoard.find({ iProtoId: req.boardProto._id, eTableMode }).sort({ dUpdatedDate: -1 }).lean();
     for (const pokerBoard of candidateBoards) {
       const board = await boardManager.getBoard(pokerBoard.iBoardId.toString());
       if (!board) {
@@ -194,30 +261,53 @@ middleware.joinGuestBoard = async (req, res, next) => {
         continue;
       }
 
-      const hasGuestPlayer = board.aParticipant.some(participant => participant.eUserType !== 'bot');
-      if (hasGuestPlayer || board.aParticipant.length >= board.nMaxPlayer) continue;
+      if (bTutorialMode && board?.oTutorial?.bCompleted) {
+        await PokerBoard.deleteOne({ iBoardId: pokerBoard.iBoardId });
+        continue;
+      }
+
+      const hasGuestPlayer = board.aParticipant.some(participantData => participantData.eUserType !== 'bot');
+      const nEligibleGuestSeatCount = getEligibleGuestSeatCount(board);
+      if (hasGuestPlayer || nEligibleGuestSeatCount >= MAX_ACTIVE_GUEST_PLAYERS || board.aParticipant.length >= board.nMaxPlayer) continue;
 
       await PokerBoard.updateOne({ iBoardId: board._id }, { $addToSet: { aParticipants: req.user._id } });
       req.board = board;
-      req.shouldSeedGuestBots = false;
+      req.guestBotCount = getMissingGuestBotCount({
+        board,
+        boardProto: req.boardProto,
+        guestBotCountOverride: req.guestBotCountOverride,
+        bTutorialMode,
+      });
+      req.shouldSeedGuestBots = req.guestBotCount > 0;
       return next();
     }
 
-    req.board = await boardManager.createBoard(req.boardProto, { eTableMode: 'guest' });
+    req.board = await boardManager.createBoard(req.boardProto, {
+      eTableMode,
+      ...(bTutorialMode && { oTutorial: req.guestTutorialState }),
+      ...(bTutorialMode && { oSetting: req.guestTutorialBoardSettings }),
+    });
     await new PokerBoard({
       iBoardId: req.board._id,
       iProtoId: req.boardProto._id,
       aParticipants: [req.user._id],
-      eTableMode: 'guest',
+      eTableMode,
     }).save();
-    req.shouldSeedGuestBots = true;
-    req.guestBotCount = Math.min(GUEST_BOT_COUNT, Math.max(Number(req.boardProto.nMaxPlayer || 0) - 1, 0));
+    req.guestBotCount = getMissingGuestBotCount({
+      board: req.board,
+      boardProto: req.boardProto,
+      guestBotCountOverride: req.guestBotCountOverride,
+      bTutorialMode,
+    });
+    req.shouldSeedGuestBots = req.guestBotCount > 0;
     next();
   } catch (error) {
     log.red(error.toString());
     return res.reply(messages.server_error(), error.toString());
   }
 };
+
+middleware.getMissingGuestBotCount = getMissingGuestBotCount;
 
 middleware.createGuestBotUsers = async (count, minBuyIn) => {
   const bots = [];

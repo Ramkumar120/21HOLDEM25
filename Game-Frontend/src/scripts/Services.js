@@ -15,4 +15,12 @@ export default class Services {
             bMusicEnabled: bMusicEnabled,
         }, { headers: { authorization: this.authorization } });
     }
+
+    async pauseGuestBoard() {
+        return await axios.post(`${this.sRoot}/api/v1/poker/guest/board/pause`, {}, { headers: { authorization: this.authorization } });
+    }
+
+    async resumeGuestBoard() {
+        return await axios.post(`${this.sRoot}/api/v1/poker/guest/board/resume`, {}, { headers: { authorization: this.authorization } });
+    }
 }

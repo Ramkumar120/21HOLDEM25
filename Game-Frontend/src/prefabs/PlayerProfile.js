@@ -3,6 +3,7 @@ import assets from "../scripts/assets";
 import config from "../scripts/config";
 import _ from "../scripts/helper";
 import Card from "../prefabs/Card";
+import { getAvatarImageSrc } from "../shared/constants/builtInAvatars";
 
 export default class PlayerProfile extends Phaser.GameObjects.Container {
   constructor(scene, x, y, nPlayerIndex) {
@@ -108,6 +109,7 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
     this.container_profile.add(profile_box);
 
     const profileSize = nPlayerIndex === 0 ? 180 : 120;
+    this.profileSize = profileSize;
 
     this.profile = scene.add
       .image(0, 0, assets.profile_picture)
@@ -359,9 +361,11 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
   setProfileImage(url, name) {
     const setDefaultProfile = () => {
       this.profile.setTexture(assets.profile_picture);
+      this.profile.setDisplaySize(this.profileSize, this.profileSize);
     };
-    if (url) {
-      const textureKey = `profile_${name}`;
+    const resolvedUrl = getAvatarImageSrc(url, name);
+    if (resolvedUrl) {
+      const textureKey = `profile_${String(name || "player").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
       // Only remove if it exists and is not currently being used
       if (
         this.scene.textures.exists(textureKey) &&
@@ -370,14 +374,11 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
         this.scene.textures.remove(textureKey);
       }
       try {
-        this.scene.load.image(textureKey, url);
+        this.scene.load.image(textureKey, resolvedUrl);
         this.scene.load.once("complete", () => {
           if (this.scene.textures.exists(textureKey)) {
-            // setTimeout(() => {
             this.profile.setTexture(textureKey);
-            this.profile.displayWidth = 200;
-            this.profile.displayHeight = 200;
-            // }, 2000);
+            this.profile.setDisplaySize(this.profileSize, this.profileSize);
           } else {
             console.error("Texture does not exist after loading:", textureKey);
             setDefaultProfile();
@@ -393,7 +394,6 @@ export default class PlayerProfile extends Phaser.GameObjects.Container {
       });
       this.scene.load.start();
     } else {
-      console.warn("No profile image URL provided for:", name);
       setDefaultProfile();
     }
   }

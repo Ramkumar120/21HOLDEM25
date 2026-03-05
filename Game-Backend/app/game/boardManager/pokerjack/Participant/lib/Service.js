@@ -6,6 +6,7 @@ class Service {
     this.iUserId = _.toString(oParticipantData.iUserId);
     this.sUserName = oParticipantData.sUserName;
     this.eUserType = oParticipantData.eUserType ?? 'user';
+    this.sTutorialRole = oParticipantData.sTutorialRole ?? '';
     this.nSeat = oParticipantData.nSeat;
     this.aCardHand = oParticipantData.aCardHand ?? [];
     this.eState = oParticipantData.eState;
@@ -41,11 +42,12 @@ class Service {
 
   async sendTurnInfo() {
     const { nTurnTime, nTurnBuffer } = this.oBoard.oSetting;
+    const bTutorialTurn = this.oBoard?.isTutorialTable?.() === true;
     const bCheckOpenState = this.aUserAction.includes('ck') && !this.aUserAction.includes('c');
     const toCallAmount = bCheckOpenState ? 0 : Math.max(this.oBoard.nMinBet - this.nLastBidChips, 0);
     const turnInfo = {
       iUserId: this.oBoard.iUserTurn,
-      nTotalTurnTime: nTurnTime - nTurnBuffer,
+      nTotalTurnTime: bTutorialTurn ? null : nTurnTime - nTurnBuffer,
       aUserAction: this.aUserAction,
       nMinBet: this.oBoard.nMinBet,
       toCallAmount,
@@ -56,8 +58,12 @@ class Service {
       this.oBoard.getScheduler('initializeGame'),
       this.oBoard.getScheduler('resetTable'),
     ]);
-    turnInfo.ttl = ttl - nTurnBuffer;
-    if (turnInfo.ttl < 200) turnInfo.ttl = null;
+    if (bTutorialTurn || ttl == null) {
+      turnInfo.ttl = null;
+    } else {
+      turnInfo.ttl = ttl - nTurnBuffer;
+      if (turnInfo.ttl < 200) turnInfo.ttl = null;
+    }
     turnInfo.nRemainingInitializeTime = nRemainingInitializeTime;
     turnInfo.nRemainingRoundStartsIn = nRemainingRoundStartsIn;
     if (nRemainingRoundStartsIn) turnInfo.nTableChips = 0;
@@ -230,6 +236,26 @@ class Service {
     return this.isBotUser() && this.oBoard?.isGuestTable?.() === true;
   }
 
+  getTutorialActionError(sRequestedAction, oData = {}) {
+    if (!this.oBoard?.isTutorialTable?.() || !this.isGuestUser()) return null;
+    const sExpectedAction = this.oBoard.getTutorialExpectedUserAction?.();
+    if (!sExpectedAction) return null;
+
+    const sNormalizedAction = sRequestedAction === 'call' && oData?.bTakeCard === false ? 'stand' : sRequestedAction;
+    if (sNormalizedAction === sExpectedAction) return null;
+
+    const oActionLabels = {
+      call: 'Call',
+      stand: 'Call/Stand',
+      doubleDown: 'Double Down',
+      raise: 'Raise',
+      check: 'Check',
+      fold: 'Fold',
+    };
+
+    return `Tutorial step: use ${oActionLabels[sExpectedAction] || sExpectedAction}.`;
+  }
+
   async emit(sEventName, oData) {
     if (!sEventName) return log.red(`emit :: Event name is required :: ${sEventName}`);
     if (global.io.to(this.sRootSocket)) global.io.to(this.sRootSocket).emit(this.oBoard._id, { sEventName, oData });
@@ -241,6 +267,7 @@ class Service {
       'iUserId',
       'sUserName',
       'eUserType',
+      'sTutorialRole',
       'nSeat',
       'nChips',
       'aCardHand',

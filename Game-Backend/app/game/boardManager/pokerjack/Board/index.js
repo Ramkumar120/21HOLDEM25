@@ -221,6 +221,8 @@ class Board extends Service {
       if (turnScheduler) await this.deleteScheduler('assignTurnTimeout');
 
       this.eState = 'finished';
+      const oTutorialHand = this.getTutorialHandConfig ? this.getTutorialHandConfig() : null;
+      const bTutorialCompleted = Boolean(this.isTutorialTable && this.isTutorialTable() && this.oTutorial && (Number(this.oTutorial.nHandIndex) || 0) >= this.getTutorialHands().length - 1);
 
       // ------------------------------ Pot Distribution ------------------------------
       if (aWinner.length) {
@@ -365,7 +367,7 @@ class Board extends Service {
       await this.update({ aParticipant: this.aParticipant.map(p => p.toJSON()), eState: this.eState });
 
       const resultData = {
-        nRoundStartsIn: this.oSetting.nRoundStartsIn + 4000,
+        nRoundStartsIn: bTutorialCompleted ? 0 : this.oSetting.nRoundStartsIn + 4000,
         aParticipant: this.aParticipant.map(p => ({
           iUserId: p.iUserId,
           eState: p.eState,
@@ -375,6 +377,15 @@ class Board extends Service {
           nCardScore: p.nCardScore,
         })),
         nTableChips: 0,
+        oTutorial:
+          this.isTutorialTable && this.isTutorialTable()
+            ? {
+                ...(this.oTutorial || {}),
+                sCurrentHandKey: oTutorialHand?.sKey,
+                sExpectedAction: oTutorialHand?.sExpectedAction,
+                bCompleted: bTutorialCompleted,
+              }
+            : undefined,
       };
 
       if (!aWinner.length) {
@@ -386,7 +397,15 @@ class Board extends Service {
       const aPlayingPlayers = this.aParticipant.filter(p => !p.bNextTurnLeave);
       if (aPlayingPlayers.length < 3) resultData.nRoundStartsIn = 4000;
 
-      this.setSchedular('resetTable', null, resultData.nRoundStartsIn);
+      if (!(bTutorialCompleted && this.isTutorialTable && this.isTutorialTable())) {
+        this.setSchedular('resetTable', null, resultData.nRoundStartsIn);
+      } else {
+        this.oTutorial = {
+          ...(this.oTutorial || {}),
+          bCompleted: true,
+        };
+        await this.update({ oTutorial: this.oTutorial });
+      }
       await this.emit('resDeclareResult', resultData);
 
       await this.saveLogs([{ sAction: 'declareResult', eLogType: 'game', ...(!aWinner.length && { sReason: 'All players are bust' }), functionCalledFrom }]);
@@ -451,6 +470,15 @@ class Board extends Service {
       this.nMaxBet = 0;
       this.nTableRound = 1;
       this.nGameRound = this.nGameRound + 1;
+      if (this.isTutorialTable()) {
+        const nNextHandIndex = ((Number(this.oTutorial?.nHandIndex) || 0) + 1) % this.getTutorialHands().length;
+        this.oTutorial = {
+          ...(this.oTutorial || {}),
+          nHandIndex: nNextHandIndex,
+          bCompleted: false,
+        };
+        this.prepareTutorialHand();
+      }
 
       await this.update({
         eState: this.eState,
@@ -461,6 +489,7 @@ class Board extends Service {
         nTableRound: this.nTableRound,
         nGameRound: this.nGameRound,
         nTableChips: this.nTableChips,
+        oTutorial: this.oTutorial,
         aParticipant: this.aParticipant,
       });
 
