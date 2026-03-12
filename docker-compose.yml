@@ -1,21 +1,44 @@
+version: "3.9"
+
 services:
+
+  nginx:
+    image: nginx:latest
+    container_name: holdem-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - frontend
+      - backend
+
+  frontend:
+    image: ramkumarv1999/holdem-frontend:latest
+    container_name: holdem-frontend
+    restart: always
+    env_file:
+      - ./frontend.env
+
+  backend:
+    image: ramkumarv1999/holdem-backend:latest
+    container_name: holdem-backend
+    env_file:
+      - ./backend.env
+    restart: always
+    depends_on:
+      - mongo
+      - redis
+
   mongo:
     image: mongo:7
-    container_name: holdem_mongo
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_DATABASE: holdem
+    container_name: holdem-mongo
     volumes:
       - mongo_data:/data/db
 
   redis:
     image: redis:7
-    container_name: holdem_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
+    container_name: holdem-redis
 
 volumes:
   mongo_data:
