@@ -6,7 +6,7 @@ export async function getTables() {
 }
 
 export async function joinTable(iTableId) {
-    return await axios.post('/api/v1/poker/board/join', { iProtoId: iTableId })
+    return await axios.post('/api/v1/poker/guest//board/join', { iProtoId: iTableId })
 }
 
 export async function createPrivateTable(iTableId) {
